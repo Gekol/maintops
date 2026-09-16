@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+{% block title %}MaintOps — AI-Powered Handyman Matching{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<section class="hero">
+  <h1>MaintOps</h1>
+  <p class="tagline">
+    AI-powered handyman matching. Describe your problem in plain
+    language and we’ll find the right professional &mdash; ranked by
+    skill, experience, ratings, and travel time.
+  </p>
+</section>
+
+<!-- Stats -->
+<div class="stat-row">
+  <div class="stat"><div class="number">1M+</div><div class="label">Incidents Resolved</div></div>
+  <div class="stat"><div class="number">500+</div><div class="label">Verified Handymen</div></div>
+  <div class="stat"><div class="number">4.8★</div><div class="label">Average Rating</div></div>
+  <div class="stat"><div class="number">&lt;15 min</div><div class="label">Avg. Match Time</div></div>
+</div>
+
+<!-- CTA -->
+<div class="cta-row">
+  <a href="{{ url_for('register') }}" class="btn btn-primary">🚀 Get Started</a>
+  <a href="#features" class="btn">🔍 Learn More</a>
+</div>
+
+<!-- Features -->
+<section id="features">
+  <div class="section-title">
+    <h2>Why MaintOps?</h2>
+    <p>Smart features that take the guesswork out of home repairs</p>
+  </div>
+  <div class="features-grid">
+    <div class="card">
+      <div class="card-icon">🧠</div>
+      <h3>AI-Powered Matching</h3>
+      <p>Describe your issue in everyday language. Our AI identifies the incident type, urgency, and required skills automatically.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">📊</div>
+      <h3>Data-Driven Rankings</h3>
+      <p>Candidates are scored on skill match, historical performance, client ratings, current workload, and real travel time.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">📍</div>
+      <h3>Real-Time Routing</h3>
+      <p>Geoapify route-matrix integration calculates actual road distance and travel time &mdash; not just straight-line estimates.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">⭐</div>
+      <h3>Continuous Improvement</h3>
+      <p>Every completed job and rating feeds back into the system, so recommendations get smarter over time.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">📄</div>
+      <h3>CV Intelligence</h3>
+      <p>Handyman CVs are parsed and classified with AI to extract specialisations, skills, and experience &mdash; even from PDFs.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">🔒</div>
+      <h3>Secure &amp; Private</h3>
+      <p>Passwords hashed with Argon2id, parameterized queries, and role-based access ensure your data stays safe.</p>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section>
+  <div class="section-title">
+    <h2>How It Works</h2>
+    <p>From problem to solution in four simple steps</p>
+  </div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <h4>Describe Your Problem</h4>
+        <p>Tell us what’s wrong in your own words &mdash; a leaky pipe, a broken lock, a faulty outlet. Our AI handles the rest.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <h4>Get Matched</h4>
+        <p>The system filters hundreds of handymen by skill, availability, and proximity, then ranks the top three.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <h4>Choose Your Handyman</h4>
+        <p>Review each candidate’s profile, ratings, and estimated arrival time. You make the final call.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <h4>Rate &amp; Improve</h4>
+        <p>After the job is done, leave a rating and feedback. Your input shapes future recommendations for everyone.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RAG Chat -->
+<section>
+  <div class="section-title">
+    <h2>💬 Have Questions?</h2>
+    <p>Ask our AI assistant anything about MaintOps &mdash; no account needed</p>
+  </div>
+  <div class="chat-container">
+    <div class="chat-messages" id="chatMessages">
+      {% for msg in chat_history %}
+        <div class="chat-msg {{ msg.role }}">{{ msg.content }}</div>
+      {% endfor %}
+    </div>
+    <form class="chat-form" method="POST" action="{{ url_for('chat') }}">
+      <input type="text" name="question" placeholder="Ask anything about MaintOps…" autocomplete="off" required>
+      <button type="submit">Send</button>
+    </form>
+  </div>
+</section>
+
+<!-- Final CTA -->
+<section class="final-cta">
+  <h3>Ready to get started?</h3>
+  <p>Join MaintOps today &mdash; whether you need a repair or you’re a professional looking for work.</p>
+  <a href="{{ url_for('register') }}" class="btn btn-primary">Create Free Account</a>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Auto-scroll chat to bottom
+  const chatBox = document.getElementById('chatMessages');
+  if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+</script>
+{% endblock %}

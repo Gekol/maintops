@@ -1,0 +1,174 @@
+{% extends 'base.html' %}
+{% block title %}Sign up — MaintOps{% endblock %}
+
+{% block content %}
+<div class="section-title">
+  <h2>Create Your MaintOps Account</h2>
+  <p>Join as a client to request repairs or as a handyman to receive jobs</p>
+</div>
+
+<!-- Role selector -->
+<div class="role-selector">
+  <div class="role-card {{ 'selected' if role == 'client' }}" onclick="selectRole('client')">
+    <div class="role-icon">🏠</div>
+    <h3>Client</h3>
+    <p>Report incidents, view recommendations, and manage your repair requests.</p>
+  </div>
+  <div class="role-card {{ 'selected' if role == 'handyman' }}" onclick="selectRole('handyman')">
+    <div class="role-icon">🧰</div>
+    <h3>Handyman</h3>
+    <p>Showcase your skills, upload your CV, and accept matched incidents.</p>
+  </div>
+</div>
+
+<div class="auth-container" style="max-width:580px;">
+  <form method="POST" action="{{ url_for('register') }}" enctype="multipart/form-data" id="registerForm">
+    <input type="hidden" name="role" id="roleInput" value="{{ role }}">
+
+    <!-- Basic info -->
+    <div class="form-section-title">Basic Information</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="first_name">First name</label>
+        <input type="text" id="first_name" name="first_name" required>
+      </div>
+      <div class="form-group">
+        <label for="last_name">Last name</label>
+        <input type="text" id="last_name" name="last_name" required>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="reg_email">Email</label>
+      <input type="email" id="reg_email" name="email" required>
+    </div>
+    <div class="form-group">
+      <label for="phone">Phone number</label>
+      <input type="tel" id="phone" name="phone">
+    </div>
+
+    <!-- Client-only: date of birth -->
+    <div id="clientFields" style="{{ '' if role == 'client' else 'display:none;' }}">
+      <div class="form-group">
+        <label for="dob">Date of birth</label>
+        <input type="date" id="dob" name="dob">
+      </div>
+    </div>
+
+    <!-- Address -->
+    <div class="form-section-title">Address</div>
+    <div class="form-group">
+      <label for="house">Street / house address</label>
+      <input type="text" id="house" name="house" required>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="postal_code">Postal code</label>
+        <input type="text" id="postal_code" name="postal_code" required>
+      </div>
+      <div class="form-group">
+        <label for="city">City</label>
+        <input type="text" id="city" name="city" required>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="state">State / region</label>
+        <input type="text" id="state" name="state">
+      </div>
+      <div class="form-group">
+        <label for="country">Country</label>
+        <input type="text" id="country" name="country" value="United Kingdom">
+      </div>
+    </div>
+
+    <!-- Security -->
+    <div class="form-section-title">Security</div>
+    <div class="form-group">
+      <label for="reg_password">Password</label>
+      <input type="password" id="reg_password" name="password" minlength="8" required>
+    </div>
+    <div class="form-group">
+      <label for="confirm_password">Confirm password</label>
+      <input type="password" id="confirm_password" name="confirm_password" minlength="8" required>
+    </div>
+
+    <!-- Handyman-only: professional profile -->
+    <div id="handymanFields" style="{{ '' if role == 'handyman' else 'display:none;' }}">
+      <div class="form-section-title">Professional Profile</div>
+      <div class="form-group">
+        <label>Primary specialisations</label>
+        <div class="multiselect-grid">
+          {% for spec in specialisations %}
+          <label>
+            <input type="checkbox" name="specialisations" value="{{ spec }}">
+            <span>{{ spec | replace('_', ' ') | title }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="skills">Skills (comma-separated)</label>
+        <input type="text" id="skills" name="skills" placeholder="pipe repair, leak detection, boiler maintenance">
+      </div>
+      <div class="form-group">
+        <label for="experience">Experience summary</label>
+        <textarea id="experience" name="experience" placeholder="Brief professional summary..."></textarea>
+      </div>
+      <div class="form-group">
+        <label for="cv_file">Upload CV (PDF or image)</label>
+        <input type="file" id="cv_file" name="cv_file" accept=".pdf,.png,.jpg,.jpeg"
+               style="color:var(--text-secondary);">
+      </div>
+    </div>
+
+    <div class="checkbox-group">
+      <input type="checkbox" id="terms" name="terms" required>
+      <label for="terms" style="margin:0;font-size:0.9rem;">I agree to the Terms of Service and Privacy Policy</label>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">Create account</button>
+  </form>
+
+  <div class="divider"><span>or</span></div>
+
+  <div class="link-row">
+    <a href="{{ url_for('login') }}">Already have an account</a>
+    <a href="{{ url_for('landing') }}">Back to home</a>
+  </div>
+
+  <p class="text-muted text-center mt-2" id="roleCaption">
+    {% if role == 'handyman' %}
+      Handyman onboarding: CV upload, document parsing, AI extraction, and profile enrichment.
+    {% else %}
+      Client onboarding captures profile and address details for registration and geocoding.
+    {% endif %}
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectRole(role) {
+    document.getElementById('roleInput').value = role;
+
+    // Toggle card highlight
+    document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
+    event.currentTarget.classList.add('selected');
+
+    // Toggle field visibility
+    const clientFields   = document.getElementById('clientFields');
+    const handymanFields = document.getElementById('handymanFields');
+    const caption        = document.getElementById('roleCaption');
+
+    if (role === 'handyman') {
+      clientFields.style.display   = 'none';
+      handymanFields.style.display = '';
+      caption.textContent = 'Handyman onboarding: CV upload, document parsing, AI extraction, and profile enrichment.';
+    } else {
+      clientFields.style.display   = '';
+      handymanFields.style.display = 'none';
+      caption.textContent = 'Client onboarding captures profile and address details for registration and geocoding.';
+    }
+  }
+</script>
+{% endblock %}
