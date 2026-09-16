@@ -11,3 +11,11 @@ services:
         generateValue: true
       - key: PYTHON_VERSION
         value: "3.12.3"
+      - key: DATABRICKS_HOST
+        sync: false  # set manually in Render dashboard
+      - key: DATABRICKS_TOKEN
+        sync: false  # set manually in Render dashboard (sensitive)
+      - key: DATABRICKS_WAREHOUSE_ID
+        sync: false  # set manually in Render dashboard
+      - key: LLM_ENDPOINT
+        value: databricks-meta-llama-3-3-70b-instruct

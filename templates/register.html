@@ -95,29 +95,64 @@
     <!-- Handyman-only: professional profile -->
     <div id="handymanFields" style="{{ '' if role == 'handyman' else 'display:none;' }}">
       <div class="form-section-title">Professional Profile</div>
-      <div class="form-group">
-        <label>Primary specialisations</label>
-        <div class="multiselect-grid">
-          {% for spec in specialisations %}
-          <label>
-            <input type="checkbox" name="specialisations" value="{{ spec }}">
-            <span>{{ spec | replace('_', ' ') | title }}</span>
-          </label>
-          {% endfor %}
+
+      <!-- Method picker: CV upload vs manual entry -->
+      <div id="methodPicker" class="method-picker">
+        <button type="button" class="method-btn selected" onclick="selectMethod('cv')">
+          📄 Upload CV
+        </button>
+        <button type="button" class="method-btn" onclick="selectMethod('manual')">
+          ✍️ Enter Manually
+        </button>
+      </div>
+      <input type="hidden" name="entry_method" id="entryMethod" value="cv">
+
+      <!-- CV upload zone -->
+      <div id="cvUploadZone" class="cv-upload-zone">
+        <div class="cv-dropzone" id="cvDropzone">
+          <div class="cv-dropzone-icon">📤</div>
+          <p>Drag &amp; drop your CV here, or click to browse</p>
+          <p class="text-muted">PDF, PNG, JPG &mdash; we’ll extract your details automatically</p>
+          <input type="file" id="cv_file" name="cv_file" accept=".pdf,.png,.jpg,.jpeg">
+        </div>
+        <div id="cvFileInfo" class="cv-file-info" style="display:none;">
+          <span id="cvFileName"></span>
+          <button type="button" class="btn-remove-file" onclick="removeCvFile()">&times;</button>
+        </div>
+        <button type="button" class="btn btn-primary btn-block mt-2" id="parseCvBtn"
+                onclick="parseCV()" style="display:none;">
+          🧠 Parse CV &amp; Pre-fill Form
+        </button>
+        <div id="parseSpinner" class="parse-spinner" style="display:none;">
+          <div class="spinner"></div>
+          <span>Extracting data from your CV…</span>
         </div>
       </div>
-      <div class="form-group">
-        <label for="skills">Skills (comma-separated)</label>
-        <input type="text" id="skills" name="skills" placeholder="pipe repair, leak detection, boiler maintenance">
-      </div>
-      <div class="form-group">
-        <label for="experience">Experience summary</label>
-        <textarea id="experience" name="experience" placeholder="Brief professional summary..."></textarea>
-      </div>
-      <div class="form-group">
-        <label for="cv_file">Upload CV (PDF or image)</label>
-        <input type="file" id="cv_file" name="cv_file" accept=".pdf,.png,.jpg,.jpeg"
-               style="color:var(--text-secondary);">
+
+      <!-- Professional profile fields (shared by both methods) -->
+      <div id="profileFields" style="{{ 'display:none;' if role == 'handyman' else '' }}">
+        <div id="cvParsedBanner" class="alert alert-success" style="display:none;">
+          ✅ CV parsed! Review the pre-filled data below and edit anything that needs correcting.
+        </div>
+        <div class="form-group">
+          <label>Primary specialisations</label>
+          <div class="multiselect-grid">
+            {% for spec in specialisations %}
+            <label>
+              <input type="checkbox" name="specialisations" value="{{ spec }}" class="spec-checkbox">
+              <span>{{ spec | replace('_', ' ') | title }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="skills">Skills (comma-separated)</label>
+          <input type="text" id="skills" name="skills" placeholder="pipe repair, leak detection, boiler maintenance">
+        </div>
+        <div class="form-group">
+          <label for="experience">Experience summary</label>
+          <textarea id="experience" name="experience" placeholder="Brief professional summary..."></textarea>
+        </div>
       </div>
     </div>
 
@@ -148,14 +183,12 @@
 
 {% block scripts %}
 <script>
+  /* ── Role switching ─────────────────────────────────────────── */
   function selectRole(role) {
     document.getElementById('roleInput').value = role;
-
-    // Toggle card highlight
     document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
     event.currentTarget.classList.add('selected');
 
-    // Toggle field visibility
     const clientFields   = document.getElementById('clientFields');
     const handymanFields = document.getElementById('handymanFields');
     const caption        = document.getElementById('roleCaption');
@@ -164,11 +197,132 @@
       clientFields.style.display   = 'none';
       handymanFields.style.display = '';
       caption.textContent = 'Handyman onboarding: CV upload, document parsing, AI extraction, and profile enrichment.';
+      // Reset to CV method and hide profile fields until method chosen
+      selectMethod('cv');
     } else {
       clientFields.style.display   = '';
       handymanFields.style.display = 'none';
       caption.textContent = 'Client onboarding captures profile and address details for registration and geocoding.';
     }
+  }
+
+  /* ── Method picker (CV vs manual) ───────────────────────────── */
+  function selectMethod(method) {
+    document.getElementById('entryMethod').value = method;
+    document.querySelectorAll('.method-btn').forEach(b => b.classList.remove('selected'));
+    event && event.currentTarget && event.currentTarget.classList.add('selected');
+
+    const cvZone       = document.getElementById('cvUploadZone');
+    const profileFields = document.getElementById('profileFields');
+    const parsedBanner = document.getElementById('cvParsedBanner');
+
+    if (method === 'cv') {
+      cvZone.style.display       = '';
+      profileFields.style.display = 'none';
+      parsedBanner.style.display = 'none';
+    } else {
+      cvZone.style.display       = 'none';
+      profileFields.style.display = '';
+      parsedBanner.style.display = 'none';
+      clearProfileFields();
+    }
+  }
+
+  /* ── File selection ─────────────────────────────────────────── */
+  const cvInput = document.getElementById('cv_file');
+  const dropzone = document.getElementById('cvDropzone');
+
+  if (cvInput) {
+    cvInput.addEventListener('change', handleFileSelect);
+  }
+  if (dropzone) {
+    dropzone.addEventListener('click', () => cvInput.click());
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) {
+        cvInput.files = e.dataTransfer.files;
+        handleFileSelect();
+      }
+    });
+  }
+
+  function handleFileSelect() {
+    const file = cvInput.files[0];
+    if (file) {
+      document.getElementById('cvFileName').textContent = file.name;
+      document.getElementById('cvFileInfo').style.display = 'flex';
+      document.getElementById('parseCvBtn').style.display = '';
+      dropzone.style.display = 'none';
+    }
+  }
+
+  function removeCvFile() {
+    cvInput.value = '';
+    document.getElementById('cvFileInfo').style.display = 'none';
+    document.getElementById('parseCvBtn').style.display = 'none';
+    dropzone.style.display = '';
+    document.getElementById('profileFields').style.display = 'none';
+    document.getElementById('cvParsedBanner').style.display = 'none';
+  }
+
+  /* ── CV parsing via AJAX ────────────────────────────────────── */
+  function parseCV() {
+    const file = cvInput.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('cv_file', file);
+
+    document.getElementById('parseCvBtn').style.display = 'none';
+    document.getElementById('parseSpinner').style.display = 'flex';
+
+    fetch('{{ url_for("parse_cv") }}', { method: 'POST', body: formData })
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('parseSpinner').style.display = 'none';
+
+        if (data.error) {
+          alert('CV parsing failed: ' + data.error);
+          document.getElementById('parseCvBtn').style.display = '';
+          return;
+        }
+
+        // Pre-fill basic info if returned
+        if (data.first_name) document.getElementById('first_name').value = data.first_name;
+        if (data.last_name)  document.getElementById('last_name').value  = data.last_name;
+        if (data.email)      document.getElementById('reg_email').value  = data.email;
+        if (data.phone)      document.getElementById('phone').value      = data.phone;
+
+        // Pre-fill professional fields
+        if (data.skills)     document.getElementById('skills').value     = data.skills;
+        if (data.experience) document.getElementById('experience').value = data.experience;
+
+        // Check matching specialisations
+        if (data.specialisations && Array.isArray(data.specialisations)) {
+          document.querySelectorAll('.spec-checkbox').forEach(cb => {
+            cb.checked = data.specialisations.includes(cb.value);
+          });
+        }
+
+        // Show pre-filled form
+        document.getElementById('profileFields').style.display = '';
+        document.getElementById('cvParsedBanner').style.display = '';
+      })
+      .catch(err => {
+        document.getElementById('parseSpinner').style.display = 'none';
+        document.getElementById('parseCvBtn').style.display = '';
+        alert('Network error: ' + err.message);
+      });
+  }
+
+  /* ── Helpers ────────────────────────────────────────────────── */
+  function clearProfileFields() {
+    document.getElementById('skills').value = '';
+    document.getElementById('experience').value = '';
+    document.querySelectorAll('.spec-checkbox').forEach(cb => cb.checked = false);
   }
 </script>
 {% endblock %}

@@ -1,10 +1,14 @@
 """MaintOps – Flask frontend entry point."""
 
+import base64
+import json
 import os
 
+import requests as http_requests
 from flask import (
     Flask,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -14,6 +18,14 @@ from flask import (
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
+
+# ─────────────────────────────────────────────────────────────
+# Databricks AI config
+# ─────────────────────────────────────────────────────────────
+DBX_HOST = os.environ.get("DATABRICKS_HOST", "")       # e.g. https://adb-123.4.azuredatabricks.net
+DBX_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")     # PAT or OAuth token
+DBX_WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")  # SQL warehouse ID
+LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
 
 # ─────────────────────────────────────────────────────────────
 # Constants
@@ -146,7 +158,8 @@ def register():
             errors.append("Password must be at least 8 characters long.")
         if not terms:
             errors.append("You must accept the Terms of Service.")
-        if role == "handyman" and "cv_file" not in request.files:
+        entry_method = request.form.get("entry_method", "manual")
+        if role == "handyman" and entry_method == "cv" and "cv_file" not in request.files:
             errors.append("Please upload a CV for handyman registration.")
 
         if errors:
@@ -166,6 +179,146 @@ def register():
         role=role,
         specialisations=SPECIALISATIONS,
     )
+
+
+@app.route("/parse-cv", methods=["POST"])
+def parse_cv():
+    """Accept a CV upload, parse it via Databricks ai_parse_document,
+    then extract structured handyman profile fields via an LLM."""
+    if "cv_file" not in request.files or request.files["cv_file"].filename == "":
+        return jsonify({"error": "No file provided."}), 400
+
+    cv_file = request.files["cv_file"]
+    file_bytes = cv_file.read()
+
+    # ---- Step 1: Parse the document via Databricks SQL Statement API ----
+    parsed_text = _parse_document(file_bytes)
+    if parsed_text is None:
+        return jsonify({"error": "Failed to parse the CV. Check server logs."}), 502
+
+    # ---- Step 2: Extract structured fields via Foundation Model ----
+    extracted = _extract_profile_fields(parsed_text)
+    if extracted is None:
+        return jsonify({"error": "Failed to extract profile from parsed CV."}), 502
+
+    return jsonify(extracted)
+
+
+# ─────────────────────────────────────────────────────────────
+# CV parsing helpers
+# ─────────────────────────────────────────────────────────────
+
+
+def _dbx_headers():
+    """Standard auth headers for Databricks REST calls."""
+    return {
+        "Authorization": f"Bearer {DBX_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+
+def _parse_document(file_bytes: bytes) -> str | None:
+    """Call ai_parse_document via the Databricks SQL Statement Execution API.
+
+    Encodes the file as base64, wraps it in a SQL query that calls
+    ai_parse_document, and extracts the concatenated text content
+    from the parsed VARIANT response.
+    """
+    b64 = base64.b64encode(file_bytes).decode()
+
+    # SQL that decodes the base64 bytes, parses the document, and
+    # flattens the elements into a single text column.
+    sql = f"""
+    WITH parsed AS (
+      SELECT ai_parse_document(
+        from_base64('{b64}'),
+        MAP('version', '2.0')
+      ) AS doc
+    )
+    SELECT concat_ws(
+      '\\n\\n',
+      transform(
+        try_cast(doc:document:elements AS ARRAY<VARIANT>),
+        el -> try_cast(el:content AS STRING)
+      )
+    ) AS full_text
+    FROM parsed
+    WHERE is_variant_null(doc:error_status)
+    """
+
+    resp = http_requests.post(
+        f"{DBX_HOST}/api/2.0/sql/statements",
+        headers=_dbx_headers(),
+        json={
+            "warehouse_id": DBX_WAREHOUSE_ID,
+            "statement": sql,
+            "wait_timeout": "120s",
+            "disposition": "INLINE",
+        },
+        timeout=180,
+    )
+
+    if resp.status_code != 200:
+        app.logger.error("ai_parse_document SQL failed: %s", resp.text)
+        return None
+
+    payload = resp.json()
+    status = payload.get("status", {}).get("state")
+    if status != "SUCCEEDED":
+        app.logger.error("SQL statement status: %s  %s", status, payload)
+        return None
+
+    rows = payload.get("result", {}).get("data_array", [])
+    if not rows or not rows[0][0]:
+        app.logger.error("ai_parse_document returned no text.")
+        return None
+
+    return rows[0][0]
+
+
+def _extract_profile_fields(cv_text: str) -> dict | None:
+    """Call a Databricks Foundation Model to extract structured
+    handyman profile fields from the parsed CV text."""
+
+    system_prompt = (
+        "You are a data extraction assistant. Given the text of a handyman's CV, "
+        "extract the following fields and return ONLY valid JSON with no markdown "
+        "formatting, no code fences, no extra text:\n"
+        '{"first_name": "", "last_name": "", "email": "", "phone": "", '
+        '"specialisations": [], "skills": "", "experience": ""}\n\n'
+        "Rules:\n"
+        "- specialisations must be a subset of: plumbing, electrical, heating_hvac, "
+        "carpentry, painting, roofing, flooring, appliance_repair, locksmith, "
+        "general_maintenance.\n"
+        "- skills should be a comma-separated string of specific abilities.\n"
+        "- experience should be a short professional summary.\n"
+        "- If a field cannot be determined, leave it as an empty string or empty array."
+    )
+
+    resp = http_requests.post(
+        f"{DBX_HOST}/serving-endpoints/{LLM_ENDPOINT}/invocations",
+        headers=_dbx_headers(),
+        json={
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": cv_text},
+            ],
+            "max_tokens": 1024,
+            "temperature": 0.0,
+        },
+        timeout=120,
+    )
+
+    if resp.status_code != 200:
+        app.logger.error("LLM extraction failed: %s", resp.text)
+        return None
+
+    try:
+        llm_output = resp.json()["choices"][0]["message"]["content"]
+        return json.loads(llm_output)
+    except (KeyError, IndexError, json.JSONDecodeError) as exc:
+        app.logger.error("Failed to parse LLM response: %s  raw=%s", exc, resp.text)
+        return None
 
 
 # ─────────────────────────────────────────────────────────────
