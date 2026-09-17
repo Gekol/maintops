@@ -46,6 +46,74 @@
     &copy; 2025 MaintOps &middot; Databricks Capstone Project &middot; AI-powered handyman matching
   </footer>
 
+  <!-- Manny floating chat -->
+  <div class="manny-panel" id="mannyPanel">
+    <div class="manny-header">
+      <div class="manny-avatar">🛠️</div>
+      <div class="manny-header-text">
+        <h4>Manny</h4>
+        <p>MaintOps AI Assistant</p>
+      </div>
+    </div>
+    <div class="manny-messages" id="mannyMessages">
+      <div class="manny-msg assistant">
+        Hi! I'm Manny, your MaintOps assistant. How can I help you today?
+      </div>
+    </div>
+    <div class="manny-input-row">
+      <input type="text" id="mannyInput" placeholder="Ask Manny anything…" autocomplete="off">
+      <button id="mannySend">Send</button>
+    </div>
+  </div>
+  <button class="manny-fab" id="mannyFab" aria-label="Chat with Manny">
+    <span class="fab-open">💬</span>
+    <span class="fab-close">✕</span>
+  </button>
+
   {% block scripts %}{% endblock %}
+
+  <script>
+    // Manny chat toggle
+    (function() {
+      const fab   = document.getElementById('mannyFab');
+      const panel = document.getElementById('mannyPanel');
+      const input = document.getElementById('mannyInput');
+      const btn   = document.getElementById('mannySend');
+      const msgs  = document.getElementById('mannyMessages');
+
+      fab.addEventListener('click', function() {
+        const open = panel.classList.toggle('open');
+        fab.classList.toggle('open', open);
+        if (open) input.focus();
+      });
+
+      function sendMessage() {
+        const text = input.value.trim();
+        if (!text) return;
+
+        // Append user bubble
+        const userMsg = document.createElement('div');
+        userMsg.className = 'manny-msg user';
+        userMsg.textContent = text;
+        msgs.appendChild(userMsg);
+        input.value = '';
+        msgs.scrollTop = msgs.scrollHeight;
+
+        // Placeholder reply (will be replaced with real agent call)
+        setTimeout(function() {
+          const reply = document.createElement('div');
+          reply.className = 'manny-msg assistant';
+          reply.textContent = "I'm not connected to my brain yet, but I will be soon! Stay tuned.";
+          msgs.appendChild(reply);
+          msgs.scrollTop = msgs.scrollHeight;
+        }, 600);
+      }
+
+      btn.addEventListener('click', sendMessage);
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') sendMessage();
+      });
+    })();
+  </script>
 </body>
 </html>

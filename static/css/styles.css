@@ -772,6 +772,172 @@ a:hover { color: var(--secondary); }
   color: var(--text-secondary);
 }
 
+/* ── Manny floating chat ─────────────────────────────────────────── */
+.manny-fab {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  border: none;
+  color: #fff;
+  font-size: 1.5rem;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(42, 122, 94, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+}
+.manny-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 22px rgba(42, 122, 94, 0.65);
+}
+.manny-fab .fab-close { display: none; }
+.manny-fab.open .fab-open  { display: none; }
+.manny-fab.open .fab-close { display: inline; }
+
+/* Chat panel */
+.manny-panel {
+  position: fixed;
+  bottom: 6rem;
+  right: 2rem;
+  width: 370px;
+  max-height: 520px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(20px) scale(0.95);
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.manny-panel.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+/* Panel header */
+.manny-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 1.2rem;
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  color: #fff;
+}
+.manny-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+}
+.manny-header-text h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.manny-header-text p {
+  margin: 0;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+/* Messages area */
+.manny-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 280px;
+  max-height: 340px;
+}
+.manny-msg {
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  max-width: 85%;
+  word-wrap: break-word;
+}
+.manny-msg.assistant {
+  background: rgba(42, 122, 94, 0.12);
+  border: 1px solid rgba(42, 122, 94, 0.2);
+  align-self: flex-start;
+  color: var(--text-primary);
+}
+.manny-msg.user {
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  color: #fff;
+  align-self: flex-end;
+}
+
+/* Input area */
+.manny-input-row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--border);
+  background: rgba(14, 17, 23, 0.5);
+}
+.manny-input-row input {
+  flex: 1;
+  padding: 0.55rem 0.9rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #111827;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.manny-input-row input:focus {
+  border-color: var(--primary-light);
+}
+.manny-input-row button {
+  padding: 0.55rem 1rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  white-space: nowrap;
+}
+.manny-input-row button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(42, 122, 94, 0.45);
+}
+
+@media (max-width: 480px) {
+  .manny-panel {
+    width: calc(100vw - 2rem);
+    right: 1rem;
+    bottom: 5.5rem;
+  }
+  .manny-fab {
+    right: 1rem;
+    bottom: 1.5rem;
+  }
+}
+
 /* ── Profile page ────────────────────────────────────────────────── */
 .profile-container {
   max-width: 620px;
