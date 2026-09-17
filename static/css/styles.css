@@ -602,6 +602,176 @@ a:hover { color: var(--secondary); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Dashboard ────────────────────────────────────────────────────── */
+.dashboard {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 2rem 0;
+}
+.dash-welcome {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.8rem 2rem;
+  margin-bottom: 1.5rem;
+}
+.dash-welcome h2 {
+  font-size: 1.6rem;
+  margin-bottom: 0.3rem;
+}
+.dash-welcome .text-secondary {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+.role-badge {
+  display: inline-block;
+  padding: 0.2rem 0.7rem;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+.role-badge.handyman {
+  background: rgba(245, 166, 35, 0.15);
+  color: var(--secondary);
+  border: 1px solid rgba(245, 166, 35, 0.3);
+}
+.role-badge.client {
+  background: rgba(42, 122, 94, 0.15);
+  color: var(--primary-light);
+  border: 1px solid rgba(42, 122, 94, 0.3);
+}
+
+/* Dashboard stat cards */
+.dash-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+.dash-stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.4rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+.dash-stat-card:hover {
+  border-color: var(--primary-light);
+  background: var(--bg-card-hover);
+}
+.dash-stat-number {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--secondary);
+  margin-bottom: 0.2rem;
+}
+.dash-stat-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Dashboard actions */
+.dash-actions {
+  display: flex;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+/* Incident cards */
+.dash-incidents {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin-bottom: 2rem;
+}
+.dash-incident-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.2rem 1.5rem;
+  transition: all 0.25s ease;
+}
+.dash-incident-card:hover {
+  border-color: var(--primary-light);
+  background: var(--bg-card-hover);
+}
+.dash-incident-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.incident-type {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.incident-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.65rem;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.status-open {
+  background: rgba(245, 166, 35, 0.15);
+  color: var(--secondary);
+}
+.status-assigned {
+  background: rgba(66, 153, 225, 0.15);
+  color: #63B3ED;
+}
+.status-completed {
+  background: rgba(72, 187, 120, 0.15);
+  color: var(--success);
+}
+.dash-incident-desc {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}
+.dash-incident-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.urgency-high, .urgency-critical { color: var(--danger); }
+.urgency-medium { color: var(--secondary); }
+.urgency-low { color: var(--success); }
+
+/* Empty state */
+.dash-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-secondary);
+}
+.dash-empty-icon {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+}
+.dash-empty p {
+  font-size: 0.95rem;
+}
+
+/* Navbar greeting */
+.nav-greeting {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 1rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
 /* ── Responsive ──────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .navbar { padding: 0.8rem 1.2rem; }
@@ -610,4 +780,6 @@ a:hover { color: var(--secondary); }
   .role-selector { grid-template-columns: 1fr; }
   .form-row { flex-direction: column; gap: 0; }
   .stat-row { gap: 1.5rem; }
+  .dash-stats { grid-template-columns: repeat(2, 1fr); }
+  .dash-incident-header { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
 }

@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard — MaintOps{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+
+  <!-- Welcome banner -->
+  <div class="dash-welcome">
+    <div>
+      <h2>👋 Welcome, {{ current_user.first_name }}!</h2>
+      <p class="text-secondary">
+        {% if current_user.is_handyman %}
+          <span class="role-badge handyman">🧰 Handyman</span>
+          Manage your jobs, track your performance, and grow your reputation.
+        {% else %}
+          <span class="role-badge client">🏠 Client</span>
+          Report incidents, track progress, and rate your handymen.
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  {% if current_user.is_handyman %}
+  <!-- ── Handyman Dashboard ───────────────────────────────────── -->
+
+  <!-- Profile stats -->
+  <div class="section-title" style="margin-top:2rem;">
+    <h2>Your Performance</h2>
+  </div>
+  <div class="dash-stats">
+    <div class="dash-stat-card">
+      <div class="dash-stat-number">{{ hm.completed_cases }}</div>
+      <div class="dash-stat-label">Jobs Completed</div>
+    </div>
+    <div class="dash-stat-card">
+      <div class="dash-stat-number">{{ '%.1f' | format(hm.rating_avg) }}★</div>
+      <div class="dash-stat-label">Avg Rating ({{ hm.rating_count }} reviews)</div>
+    </div>
+    <div class="dash-stat-card">
+      <div class="dash-stat-number">{{ hm.specialisations | length }}</div>
+      <div class="dash-stat-label">Specialisations</div>
+    </div>
+    <div class="dash-stat-card">
+      <div class="dash-stat-number">{{ hm.avg_price or '—' }}</div>
+      <div class="dash-stat-label">Avg Price</div>
+    </div>
+  </div>
+
+  <!-- Assigned incidents -->
+  <div class="section-title"><h2>Your Assigned Jobs</h2></div>
+  {% if incidents %}
+  <div class="dash-incidents">
+    {% for inc in incidents %}
+    <div class="dash-incident-card">
+      <div class="dash-incident-header">
+        <span class="incident-type">{{ inc.incident_type or 'Unclassified' }}</span>
+        <span class="incident-status status-{{ inc.status }}">{{ inc.status }}</span>
+      </div>
+      <p class="dash-incident-desc">{{ inc.description[:120] }}{% if inc.description|length > 120 %}…{% endif %}</p>
+      <div class="dash-incident-meta">
+        <span>📅 {{ inc.created_at.strftime('%d %b %Y') }}</span>
+        {% if inc.urgency %}<span class="urgency-{{ inc.urgency }}">⚡ {{ inc.urgency }}</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="dash-empty">
+    <div class="dash-empty-icon">📭</div>
+    <p>No jobs assigned yet. New matches will appear here.</p>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <!-- ── Client Dashboard ─────────────────────────────────────── -->
+
+  <!-- Quick actions -->
+  <div class="dash-actions">
+    <a href="#" class="btn btn-primary">🚨 Report New Incident</a>
+  </div>
+
+  <!-- Client incidents -->
+  <div class="section-title"><h2>Your Incidents</h2></div>
+  {% if incidents %}
+  <div class="dash-incidents">
+    {% for inc in incidents %}
+    <div class="dash-incident-card">
+      <div class="dash-incident-header">
+        <span class="incident-type">{{ inc.incident_type or 'Unclassified' }}</span>
+        <span class="incident-status status-{{ inc.status }}">{{ inc.status }}</span>
+      </div>
+      <p class="dash-incident-desc">{{ inc.description[:120] }}{% if inc.description|length > 120 %}…{% endif %}</p>
+      <div class="dash-incident-meta">
+        <span>📅 {{ inc.created_at.strftime('%d %b %Y') }}</span>
+        {% if inc.urgency %}<span class="urgency-{{ inc.urgency }}">⚡ {{ inc.urgency }}</span>{% endif %}
+        {% if inc.handyman_name %}<span>🔧 {{ inc.handyman_name }}</span>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="dash-empty">
+    <div class="dash-empty-icon">🏡</div>
+    <p>No incidents yet. When something breaks, we've got you covered!</p>
+  </div>
+  {% endif %}
+
+  {% endif %}
+</div>
+{% endblock %}

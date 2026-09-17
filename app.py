@@ -191,6 +191,81 @@ def chat():
     return redirect(url_for("landing") + "#features")
 
 
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    """Authenticated user dashboard — role-aware."""
+    hm = None
+    incidents = []
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if current_user.is_handyman:
+                # Fetch handyman profile stats
+                cur.execute(
+                    "SELECT specialisations, completed_cases, rating_avg, "
+                    "rating_count, avg_price "
+                    "FROM maintops.handyman_details WHERE user_id = %s",
+                    (current_user.id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    hm = {
+                        "specialisations": row[0] or [],
+                        "completed_cases": row[1],
+                        "rating_avg": float(row[2]),
+                        "rating_count": row[3],
+                        "avg_price": row[4],
+                    }
+                else:
+                    hm = {
+                        "specialisations": [],
+                        "completed_cases": 0,
+                        "rating_avg": 0.0,
+                        "rating_count": 0,
+                        "avg_price": None,
+                    }
+
+                # Fetch assigned incidents
+                cur.execute(
+                    "SELECT id, description, incident_type, urgency, "
+                    "status, created_at "
+                    "FROM maintops.incidents "
+                    "WHERE handyman_user_id = %s "
+                    "ORDER BY created_at DESC LIMIT 20",
+                    (current_user.id,),
+                )
+                for r in cur.fetchall():
+                    incidents.append({
+                        "id": r[0], "description": r[1],
+                        "incident_type": r[2], "urgency": r[3],
+                        "status": r[4], "created_at": r[5],
+                    })
+            else:
+                # Fetch client's reported incidents (with handyman name)
+                cur.execute(
+                    "SELECT i.id, i.description, i.incident_type, i.urgency, "
+                    "i.status, i.created_at, "
+                    "u.first_name || ' ' || u.last_name AS handyman_name "
+                    "FROM maintops.incidents i "
+                    "LEFT JOIN maintops.users u ON i.handyman_user_id = u.id "
+                    "WHERE i.reported_by_user_id = %s "
+                    "ORDER BY i.created_at DESC LIMIT 20",
+                    (current_user.id,),
+                )
+                for r in cur.fetchall():
+                    incidents.append({
+                        "id": r[0], "description": r[1],
+                        "incident_type": r[2], "urgency": r[3],
+                        "status": r[4], "created_at": r[5],
+                        "handyman_name": r[6],
+                    })
+
+    return render_template(
+        "dashboard.html", hm=hm, incidents=incidents,
+    )
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Login page."""
@@ -231,7 +306,7 @@ def login():
         flash(f"Welcome back, {fn}!", "success")
 
         next_page = request.args.get("next")
-        return redirect(next_page or url_for("landing"))
+        return redirect(next_page or url_for("dashboard"))
 
     return render_template("login.html")
 
@@ -306,7 +381,7 @@ def register():
             user = User(user_id, email, first_name, last_name, is_handyman, True)
             login_user(user)
             flash(f"Welcome to MaintOps, {first_name}!", "success")
-            return redirect(url_for("landing"))
+            return redirect(url_for("dashboard"))
 
         except Exception as exc:
             if "users_email_key" in str(exc):
