@@ -18,8 +18,13 @@
       <span class="brand-name">MaintOps</span>
     </a>
     <div class="nav-links">
-      <a href="{{ url_for('login') }}">🔑 Log in</a>
-      <a href="{{ url_for('register') }}" class="btn-primary">✍️ Sign up</a>
+      {% if current_user.is_authenticated %}
+        <span class="nav-greeting">👋 {{ current_user.first_name }}</span>
+        <a href="{{ url_for('logout') }}" class="btn-primary">Log out</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">🔑 Log in</a>
+        <a href="{{ url_for('register') }}" class="btn-primary">✍️ Sign up</a>
+      {% endif %}
     </div>
   </nav>
 

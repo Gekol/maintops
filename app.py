@@ -3,7 +3,9 @@
 import base64
 import json
 import os
+from functools import wraps
 
+import bcrypt
 import requests as http_requests
 from flask import (
     Flask,
@@ -15,16 +17,95 @@ from flask import (
     session,
     url_for,
 )
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
+
+from db import get_connection
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
 
 # ─────────────────────────────────────────────────────────────
+# Flask-Login setup
+# ─────────────────────────────────────────────────────────────
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+login_manager.login_message_category = "error"
+
+
+class User(UserMixin):
+    """Lightweight user object for Flask-Login session management."""
+
+    def __init__(self, id, email, first_name, last_name, is_handyman, is_active):
+        self.id = id
+        self.email = email
+        self.first_name = first_name
+        self.last_name = last_name
+        self.is_handyman = is_handyman
+        self._is_active = is_active
+
+    @property
+    def is_active(self):
+        return self._is_active
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Reload user from Lakebase on every request (Flask-Login callback)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, first_name, last_name, is_handyman, is_active "
+                "FROM maintops.users WHERE id = %s",
+                (int(user_id),),
+            )
+            row = cur.fetchone()
+    if row is None:
+        return None
+    return User(*row)
+
+
+# ─────────────────────────────────────────────────────────────
+# Auth decorators
+# ─────────────────────────────────────────────────────────────
+
+
+def handyman_required(f):
+    """Restrict a route to logged-in handymen."""
+    @wraps(f)
+    @login_required
+    def decorated(*args, **kwargs):
+        if not current_user.is_handyman:
+            flash("This page is for handymen only.", "error")
+            return redirect(url_for("landing"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def client_required(f):
+    """Restrict a route to logged-in clients (non-handymen)."""
+    @wraps(f)
+    @login_required
+    def decorated(*args, **kwargs):
+        if current_user.is_handyman:
+            flash("This page is for clients only.", "error")
+            return redirect(url_for("landing"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ─────────────────────────────────────────────────────────────
 # Databricks AI config
 # ─────────────────────────────────────────────────────────────
-DBX_HOST = os.environ.get("DATABRICKS_HOST", "")       # e.g. https://adb-123.4.azuredatabricks.net
+DBX_HOST = os.environ.get("DATABRICKS_HOST", "")       # e.g. https://dbc-xxx.cloud.databricks.com
 DBX_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")     # PAT or OAuth token
-DBX_WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")  # SQL warehouse ID
 LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
 
 # ─────────────────────────────────────────────────────────────
@@ -119,14 +200,38 @@ def login():
 
         if not email or not password:
             flash("Please provide both email and password.", "error")
-        else:
-            # TODO: wire to Lakebase auth backend
-            flash(
-                "Frontend login flow complete. Connect this form to your "
-                "Lakebase authentication backend next.",
-                "success",
-            )
-        return redirect(url_for("login"))
+            return redirect(url_for("login"))
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, email, first_name, last_name, "
+                    "is_handyman, is_active, password_hash "
+                    "FROM maintops.users WHERE email = %s",
+                    (email,),
+                )
+                row = cur.fetchone()
+
+        if row is None:
+            flash("Invalid email or password.", "error")
+            return redirect(url_for("login"))
+
+        uid, em, fn, ln, is_hm, is_act, pw_hash = row
+
+        if not bcrypt.checkpw(password.encode(), pw_hash.encode()):
+            flash("Invalid email or password.", "error")
+            return redirect(url_for("login"))
+
+        if not is_act:
+            flash("Your account has been deactivated.", "error")
+            return redirect(url_for("login"))
+
+        user = User(uid, em, fn, ln, is_hm, is_act)
+        login_user(user)
+        flash(f"Welcome back, {fn}!", "success")
+
+        next_page = request.args.get("next")
+        return redirect(next_page or url_for("landing"))
 
     return render_template("login.html")
 
@@ -165,14 +270,51 @@ def register():
         if errors:
             for err in errors:
                 flash(err, "error")
-        else:
-            # TODO: wire to Lakebase, Geoapify geocoding, CV processing
-            flash(
-                f"{role.title()} registration UI is ready. "
-                "Next, connect this form to Lakebase, Geoapify geocoding, and CV processing.",
-                "success",
-            )
-        return redirect(url_for("register", role=role))
+            return redirect(url_for("register", role=role))
+
+        # Hash password with bcrypt
+        pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        is_handyman = role == "handyman"
+
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO maintops.users "
+                        "(email, password_hash, first_name, last_name, "
+                        " house, postal_code, city, country, is_handyman) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                        "RETURNING id",
+                        (
+                            email, pw_hash, first_name, last_name,
+                            house, postal_code, city, country, is_handyman,
+                        ),
+                    )
+                    user_id = cur.fetchone()[0]
+
+                    # Create handyman_details row if registering as handyman
+                    if is_handyman:
+                        specs = request.form.getlist("specialisations")
+                        cur.execute(
+                            "INSERT INTO maintops.handyman_details "
+                            "(user_id, specialisations) VALUES (%s, %s)",
+                            (user_id, specs),
+                        )
+
+                    conn.commit()
+
+            user = User(user_id, email, first_name, last_name, is_handyman, True)
+            login_user(user)
+            flash(f"Welcome to MaintOps, {first_name}!", "success")
+            return redirect(url_for("landing"))
+
+        except Exception as exc:
+            if "users_email_key" in str(exc):
+                flash("An account with this email already exists.", "error")
+            else:
+                app.logger.error("Registration failed: %s", exc)
+                flash("Registration failed. Please try again.", "error")
+            return redirect(url_for("register", role=role))
 
     return render_template(
         "register.html",
@@ -181,7 +323,17 @@ def register():
     )
 
 
+@app.route("/logout")
+@login_required
+def logout():
+    """Log the user out and redirect to landing."""
+    logout_user()
+    flash("You have been logged out.", "success")
+    return redirect(url_for("landing"))
+
+
 @app.route("/parse-cv", methods=["POST"])
+@login_required
 def parse_cv():
     """Accept a CV upload, parse it via Databricks ai_parse_document,
     then extract structured handyman profile fields via an LLM."""
@@ -250,7 +402,6 @@ def _parse_document(file_bytes: bytes) -> str | None:
         f"{DBX_HOST}/api/2.0/sql/statements",
         headers=_dbx_headers(),
         json={
-            "warehouse_id": DBX_WAREHOUSE_ID,
             "statement": sql,
             "wait_timeout": "120s",
             "disposition": "INLINE",

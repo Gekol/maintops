@@ -1,1 +1,6 @@
 command: ["flask", "run", "--host", "0.0.0.0", "--port", "8000", "--debug"]
+env:
+  - name: FLASK_SECRET_KEY
+    valueFrom: secret
+  - name: LAKEBASE_PG_URL
+    valueFrom: secret
