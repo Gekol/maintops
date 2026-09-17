@@ -1,0 +1,142 @@
+{% extends 'base.html' %}
+{% block title %}My Profile — MaintOps{% endblock %}
+
+{% block content %}
+<div class="profile-container">
+
+  <div class="section-title" style="margin-top:2rem;">
+    <h2>👤 My Profile</h2>
+    <p>Review and update your personal information</p>
+  </div>
+
+  <form method="POST" action="{{ url_for('profile') }}" class="profile-form">
+
+    <!-- Personal info -->
+    <div class="profile-section">
+      <div class="profile-section-title">Personal Information</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="first_name">First name</label>
+          <input type="text" id="first_name" name="first_name" value="{{ user_data.first_name }}" required>
+        </div>
+        <div class="form-group">
+          <label for="last_name">Last name</label>
+          <input type="text" id="last_name" name="last_name" value="{{ user_data.last_name }}" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" value="{{ user_data.email }}" disabled class="input-disabled">
+        <small class="text-muted">Email cannot be changed.</small>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="phone">Phone number</label>
+          <input type="tel" id="phone" name="phone" value="{{ user_data.phone or '' }}">
+        </div>
+        <div class="form-group">
+          <label for="dob">Date of birth</label>
+          <input type="date" id="dob" name="date_of_birth" value="{{ user_data.date_of_birth or '' }}">
+        </div>
+      </div>
+    </div>
+
+    <!-- Address -->
+    <div class="profile-section">
+      <div class="profile-section-title">Address</div>
+      <div class="form-group">
+        <label for="house">Street / house address</label>
+        <input type="text" id="house" name="house" value="{{ user_data.house or '' }}">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="postal_code">Postal code</label>
+          <input type="text" id="postal_code" name="postal_code" value="{{ user_data.postal_code or '' }}">
+        </div>
+        <div class="form-group">
+          <label for="city">City</label>
+          <input type="text" id="city" name="city" value="{{ user_data.city or '' }}">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="state">State / region</label>
+          <input type="text" id="state" name="state" value="{{ user_data.state or '' }}">
+        </div>
+        <div class="form-group">
+          <label for="country">Country</label>
+          <input type="text" id="country" name="country" value="{{ user_data.country or '' }}">
+        </div>
+      </div>
+    </div>
+
+    {% if current_user.is_handyman and hm %}
+    <!-- Handyman profile -->
+    <div class="profile-section">
+      <div class="profile-section-title">Professional Profile</div>
+      <div class="form-group">
+        <label>Specialisations</label>
+        <div class="multiselect-grid">
+          {% for spec in specialisations %}
+          <label>
+            <input type="checkbox" name="specialisations" value="{{ spec }}" class="spec-checkbox"
+              {{ 'checked' if spec in hm.specialisations else '' }}>
+            <span>{{ spec | replace('_', ' ') | title }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="skills">Skills (comma-separated)</label>
+        <input type="text" id="skills" name="skills" value="{{ hm.skills | join(', ') if hm.skills else '' }}"
+          placeholder="pipe repair, leak detection, boiler maintenance">
+      </div>
+      <div class="form-group">
+        <label for="experience">Experience summary</label>
+        <textarea id="experience" name="experience_summary" rows="4"
+          placeholder="Brief professional summary...">{{ hm.experience_summary or '' }}</textarea>
+      </div>
+      <div class="checkbox-group">
+        <input type="checkbox" id="has_car" name="has_car" {{ 'checked' if hm.has_car else '' }}>
+        <label for="has_car" style="margin:0;font-size:0.9rem;">I have a car (available for travel)</label>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Change password -->
+    <div class="profile-section">
+      <div class="profile-section-title">Change Password</div>
+      <p class="text-muted" style="margin-bottom:0.8rem;">Leave blank to keep your current password.</p>
+      <div class="form-group">
+        <label for="current_password">Current password</label>
+        <input type="password" id="current_password" name="current_password" autocomplete="current-password">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="new_password">New password</label>
+          <input type="password" id="new_password" name="new_password" minlength="8" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label for="confirm_new_password">Confirm new password</label>
+          <input type="password" id="confirm_new_password" name="confirm_new_password" minlength="8" autocomplete="new-password">
+        </div>
+      </div>
+    </div>
+
+    <!-- Account info (read-only) -->
+    <div class="profile-section">
+      <div class="profile-section-title">Account</div>
+      <div class="profile-meta">
+        <span>Role: <strong>{{ 'Handyman' if current_user.is_handyman else 'Client' }}</strong></span>
+        <span>Member since: <strong>{{ user_data.created_at.strftime('%d %b %Y') }}</strong></span>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">Save Changes</button>
+  </form>
+
+  <div class="link-row" style="margin-bottom:2rem;">
+    <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}

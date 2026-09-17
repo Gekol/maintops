@@ -19,7 +19,8 @@
     </a>
     <div class="nav-links">
       {% if current_user.is_authenticated %}
-        <span class="nav-greeting">👋 {{ current_user.first_name }}</span>
+        <a href="{{ url_for('dashboard') }}">📊 Dashboard</a>
+        <a href="{{ url_for('profile') }}">👤 {{ current_user.first_name }}</a>
         <a href="{{ url_for('logout') }}" class="btn-primary">Log out</a>
       {% else %}
         <a href="{{ url_for('login') }}">🔑 Log in</a>

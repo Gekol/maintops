@@ -23,6 +23,10 @@
   {% if current_user.is_handyman %}
   <!-- ── Handyman Dashboard ───────────────────────────────────── -->
 
+  <div class="dash-actions">
+    <a href="{{ url_for('profile') }}" class="btn">👤 Edit Profile</a>
+  </div>
+
   <!-- Profile stats -->
   <div class="section-title" style="margin-top:2rem;">
     <h2>Your Performance</h2>
@@ -77,6 +81,7 @@
   <!-- Quick actions -->
   <div class="dash-actions">
     <a href="#" class="btn btn-primary">🚨 Report New Incident</a>
+    <a href="{{ url_for('profile') }}" class="btn">👤 Edit Profile</a>
   </div>
 
   <!-- Client incidents -->

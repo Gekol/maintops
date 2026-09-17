@@ -266,6 +266,152 @@ def dashboard():
     )
 
 
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile():
+    """View and update personal information."""
+    if request.method == "POST":
+        first_name = request.form.get("first_name", "").strip()
+        last_name = request.form.get("last_name", "").strip()
+        phone = request.form.get("phone", "").strip() or None
+        date_of_birth = request.form.get("date_of_birth", "").strip() or None
+        house = request.form.get("house", "").strip() or None
+        postal_code = request.form.get("postal_code", "").strip() or None
+        city = request.form.get("city", "").strip() or None
+        state = request.form.get("state", "").strip() or None
+        country = request.form.get("country", "").strip() or None
+
+        if not first_name or not last_name:
+            flash("First name and last name are required.", "error")
+            return redirect(url_for("profile"))
+
+        # --- Password change (optional) ---
+        current_pw = request.form.get("current_password", "")
+        new_pw = request.form.get("new_password", "")
+        confirm_pw = request.form.get("confirm_new_password", "")
+        new_hash = None
+
+        if new_pw:
+            if not current_pw:
+                flash("Please enter your current password to change it.", "error")
+                return redirect(url_for("profile"))
+            if new_pw != confirm_pw:
+                flash("New passwords do not match.", "error")
+                return redirect(url_for("profile"))
+            if len(new_pw) < 8:
+                flash("New password must be at least 8 characters.", "error")
+                return redirect(url_for("profile"))
+
+            # Verify current password
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT password_hash FROM maintops.users WHERE id = %s",
+                        (current_user.id,),
+                    )
+                    stored_hash = cur.fetchone()[0]
+
+            if not bcrypt.checkpw(current_pw.encode(), stored_hash.encode()):
+                flash("Current password is incorrect.", "error")
+                return redirect(url_for("profile"))
+
+            new_hash = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
+
+        # --- Update user record ---
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    if new_hash:
+                        cur.execute(
+                            "UPDATE maintops.users SET first_name=%s, last_name=%s, "
+                            "phone=%s, date_of_birth=%s, house=%s, postal_code=%s, "
+                            "city=%s, state=%s, country=%s, password_hash=%s "
+                            "WHERE id=%s",
+                            (
+                                first_name, last_name, phone, date_of_birth,
+                                house, postal_code, city, state, country,
+                                new_hash, current_user.id,
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            "UPDATE maintops.users SET first_name=%s, last_name=%s, "
+                            "phone=%s, date_of_birth=%s, house=%s, postal_code=%s, "
+                            "city=%s, state=%s, country=%s "
+                            "WHERE id=%s",
+                            (
+                                first_name, last_name, phone, date_of_birth,
+                                house, postal_code, city, state, country,
+                                current_user.id,
+                            ),
+                        )
+
+                    # Update handyman details if applicable
+                    if current_user.is_handyman:
+                        specs = request.form.getlist("specialisations")
+                        skills_raw = request.form.get("skills", "").strip()
+                        skills = [s.strip() for s in skills_raw.split(",") if s.strip()] if skills_raw else None
+                        experience = request.form.get("experience_summary", "").strip() or None
+                        has_car = request.form.get("has_car") == "on"
+
+                        cur.execute(
+                            "UPDATE maintops.handyman_details "
+                            "SET specialisations=%s, skills=%s, "
+                            "experience_summary=%s, has_car=%s "
+                            "WHERE user_id=%s",
+                            (specs, skills, experience, has_car, current_user.id),
+                        )
+
+                    conn.commit()
+
+            flash("Profile updated successfully.", "success")
+        except Exception as exc:
+            app.logger.error("Profile update failed: %s", exc)
+            flash("Failed to update profile. Please try again.", "error")
+
+        return redirect(url_for("profile"))
+
+    # --- GET: load current data ---
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT first_name, last_name, email, phone, date_of_birth, "
+                "house, postal_code, city, state, country, created_at "
+                "FROM maintops.users WHERE id = %s",
+                (current_user.id,),
+            )
+            row = cur.fetchone()
+            user_data = {
+                "first_name": row[0], "last_name": row[1], "email": row[2],
+                "phone": row[3], "date_of_birth": row[4], "house": row[5],
+                "postal_code": row[6], "city": row[7], "state": row[8],
+                "country": row[9], "created_at": row[10],
+            }
+
+            hm = None
+            if current_user.is_handyman:
+                cur.execute(
+                    "SELECT specialisations, skills, experience_summary, has_car "
+                    "FROM maintops.handyman_details WHERE user_id = %s",
+                    (current_user.id,),
+                )
+                hrow = cur.fetchone()
+                if hrow:
+                    hm = {
+                        "specialisations": hrow[0] or [],
+                        "skills": hrow[1] or [],
+                        "experience_summary": hrow[2],
+                        "has_car": hrow[3],
+                    }
+
+    return render_template(
+        "profile.html",
+        user_data=user_data,
+        hm=hm,
+        specialisations=SPECIALISATIONS,
+    )
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Login page."""
