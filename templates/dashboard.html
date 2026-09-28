@@ -50,6 +50,23 @@
     </div>
   </div>
 
+  <!-- Feedback insights (Manny: search_my_reviews / get_my_performance) -->
+  <div class="section-title"><h2>Ask About Your Feedback</h2></div>
+  <div class="insights">
+    <form id="insights-form" class="insights-form">
+      <label for="insights-q" class="sr-only">Your question</label>
+      <input id="insights-q" type="text" maxlength="500" autocomplete="off" required
+             placeholder="e.g. What's my weakest side from the customers' perspective?">
+      <button id="insights-btn" class="btn btn-primary">Ask Manny</button>
+    </form>
+    <div class="insights-examples">
+      <button type="button" class="insights-chip" data-q="Show me the jobs where my feedback was the worst.">Worst feedback</button>
+      <button type="button" class="insights-chip" data-q="What's my weakest side from the customers' perspective?">My weakest side</button>
+      <button type="button" class="insights-chip" data-q="Which job types do customers rate me best for?">My strengths</button>
+    </div>
+    <div id="insights-result" class="insights-result" aria-live="polite" hidden></div>
+  </div>
+
   <!-- Assigned incidents -->
   <div class="section-title"><h2>Your Assigned Jobs</h2></div>
   {% if incidents %}
@@ -157,4 +174,55 @@
 
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if current_user.is_handyman %}
+<script>
+  (function() {
+    const form = document.getElementById('insights-form');
+    const input = document.getElementById('insights-q');
+    const button = document.getElementById('insights-btn');
+    const result = document.getElementById('insights-result');
+
+    function show(html, cls) {
+      result.hidden = false;
+      result.className = 'insights-result' + (cls ? ' ' + cls : '');
+      result.innerHTML = html;
+    }
+
+    async function ask(question) {
+      button.disabled = true;
+      show('Manny is looking at your reviews…', 'loading');
+      try {
+        const resp = await fetch('/api/manny', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-CSRFToken': window.MannyUI.csrf},
+          body: JSON.stringify({messages: [{role: 'user', content: question}]})
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Manny is not available right now.');
+        show('<div class="insights-reply">' + window.MannyUI.format(data.reply) + '</div>');
+        if (data.incidents && data.incidents.length) result.appendChild(window.MannyUI.incidentList(data.incidents));
+      } catch (e) {
+        show(window.MannyUI.format(e.message), 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (q) ask(q);
+    });
+    document.querySelectorAll('.insights-chip').forEach(function(chip) {
+      chip.addEventListener('click', function() {
+        input.value = chip.dataset.q;
+        ask(chip.dataset.q);
+      });
+    });
+  })();
+</script>
+{% endif %}
 {% endblock %}

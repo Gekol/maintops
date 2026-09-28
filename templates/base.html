@@ -162,6 +162,27 @@
         msgs.scrollTop = msgs.scrollHeight;
       }
 
+      // Rated jobs returned by search_my_reviews (handyman insights); also used by the dashboard form
+      function incidentList(items) {
+        const wrap = document.createElement('div');
+        wrap.className = 'manny-incidents';
+        items.forEach(function(i) {
+          const row = document.createElement('div');
+          row.className = 'manny-incident';
+          row.innerHTML =
+            '<div class="manny-incident-head"><span>#' + i.id + ' · ' + escapeHtml(String(i.incident_type || '')) +
+            (i.completed_at ? ' · ' + escapeHtml(i.completed_at) : '') + '</span>' +
+            '<span class="manny-incident-stars" title="' + i.rating + ' of 5">' +
+            '★'.repeat(i.rating) + '☆'.repeat(5 - i.rating) + '</span></div>' +
+            '<div class="manny-incident-desc">' + escapeHtml(i.description || '') + '</div>' +
+            (i.feedback ? '<div class="manny-incident-feedback">“' + escapeHtml(i.feedback) + '”</div>' :
+                          '<div class="manny-incident-feedback muted">No written review</div>');
+          wrap.appendChild(row);
+        });
+        return wrap;
+      }
+      window.MannyUI = {format: format, incidentList: incidentList, csrf: CSRF_TOKEN};
+
       async function assign(incidentId, c, wrap) {
         if (!confirm('Assign ' + c.name + ' to incident #' + incidentId + '?')) return;
         wrap.querySelectorAll('button').forEach(b => b.disabled = true);
@@ -201,6 +222,10 @@
           bubble('assistant', data.reply);
           history.push({role: 'assistant', content: data.reply});
           if (data.candidates && data.candidates.length && data.incident_id) renderCards(data.incident_id, data.candidates);
+          if (data.incidents && data.incidents.length) {
+            msgs.appendChild(incidentList(data.incidents));
+            msgs.scrollTop = msgs.scrollHeight;
+          }
           save();
         } catch (e) {
           thinking.remove();

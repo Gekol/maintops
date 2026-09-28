@@ -966,3 +966,62 @@ a:hover { color: var(--secondary); }
   font-size: 0.88rem;
 }
 .dash-feedback-row input { flex: 1; min-width: 180px; }
+
+/* ── Handyman feedback insights (dashboard form + Manny widget) ──── */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.insights {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.insights-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.insights-form input {
+  flex: 1;
+  min-width: 220px;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #111827;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+.insights-form button:disabled { opacity: 0.6; cursor: default; }
+.insights-examples { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.insights-chip {
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.insights-chip:hover, .insights-chip:focus-visible { color: var(--text-primary); border-color: var(--primary-light); }
+.insights-result { display: flex; flex-direction: column; gap: 0.7rem; }
+.insights-result.loading { color: var(--text-secondary); font-style: italic; }
+.insights-result.error { color: var(--danger); }
+.insights-reply { color: var(--text-primary); line-height: 1.55; }
+
+.manny-incidents { display: flex; flex-direction: column; gap: 0.5rem; align-self: stretch; }
+.manny-incident {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.88rem;
+}
+.manny-incident-head {
+  display: flex; justify-content: space-between; gap: 0.5rem;
+  color: var(--text-secondary); font-size: 0.8rem;
+}
+.manny-incident-stars { color: var(--secondary); white-space: nowrap; letter-spacing: 0.05em; }
+.manny-incident-desc { color: var(--text-primary); margin: 0.3rem 0; }
+.manny-incident-feedback { color: var(--text-secondary); font-style: italic; }
+.manny-incident-feedback.muted { opacity: 0.7; }
