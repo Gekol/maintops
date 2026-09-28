@@ -1,0 +1,184 @@
+# Databricks Asset Bundle: jobs for the MaintOps data platform.
+# Deploy: databricks bundle deploy -p george_sokolovsky
+# Run:    databricks bundle run maintops_rag -p george_sokolovsky
+bundle:
+  name: maintops
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-7b106152-caf3.cloud.databricks.com
+
+resources:
+  pipelines:
+    # Analytics: Lakeflow Declarative Pipeline over Lakebase CDF (app events + incident changes) → metrics tables
+    maintops_analytics:
+      name: maintops_analytics
+      catalog: bootcamp_students
+      schema: maintops
+      serverless: true
+      continuous: false
+      libraries:
+        - glob:
+            include: ./pipeline/analytics/maintops_analytics.py
+
+  jobs:
+    # Refreshes the analytics pipeline every 30 minutes (incremental: only new CDF changes are processed)
+    maintops_analytics_refresh:
+      name: maintops_analytics_refresh
+      schedule:
+        quartz_cron_expression: "0 0/30 * * * ?"
+        timezone_id: Europe/Berlin
+        pause_status: UNPAUSED   # set explicitly: development mode would pause it otherwise
+      tasks:
+        - task_key: refresh_analytics
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.maintops_analytics.id}
+
+    # FAQ knowledge base for Manny: parse PDF → chunk → sync vector index → check retrieval quality.
+    # Every step is idempotent, so the job can be re-run at any time.
+    maintops_rag:
+      name: maintops_rag
+      tasks:
+        - task_key: setup_schema
+          notebook_task:
+            notebook_path: ./notebooks/01_setup_schema.ipynb
+        - task_key: parse_faq
+          depends_on:
+            - task_key: setup_schema
+          notebook_task:
+            notebook_path: ./notebooks/02_parse_faq.ipynb
+        - task_key: chunk_and_index_faq
+          depends_on:
+            - task_key: parse_faq
+          notebook_task:
+            notebook_path: ./notebooks/03_chunk_faq.ipynb
+        - task_key: eval_retrieval
+          depends_on:
+            - task_key: chunk_and_index_faq
+          notebook_task:
+            notebook_path: ./notebooks/05_eval_retrieval.ipynb
+
+    # Synthetic data: real addresses → 100k clients → 10k handymen → 10k CV PDFs → 1M incidents → checks.
+    # Every notebook overwrites its own output, so the job can be re-run from scratch.
+    maintops_synth:
+      name: maintops_synth
+      tasks:
+        - task_key: real_addresses
+          notebook_task:
+            notebook_path: ./data_synthesis/01_real_addresses.ipynb
+        - task_key: generate_users
+          depends_on:
+            - task_key: real_addresses
+          notebook_task:
+            notebook_path: ./data_synthesis/02_generate_users.ipynb
+        - task_key: generate_handymen
+          depends_on:
+            - task_key: generate_users
+          notebook_task:
+            notebook_path: ./data_synthesis/03_generate_handymen.ipynb
+        - task_key: generate_cv_pdfs
+          depends_on:
+            - task_key: generate_handymen
+          notebook_task:
+            notebook_path: ./data_synthesis/04_generate_cv_pdfs.ipynb
+        - task_key: generate_incidents
+          depends_on:
+            - task_key: generate_handymen
+          notebook_task:
+            notebook_path: ./data_synthesis/05_generate_incidents.ipynb
+        - task_key: validate
+          depends_on:
+            - task_key: generate_cv_pdfs
+            - task_key: generate_incidents
+          notebook_task:
+            notebook_path: ./data_synthesis/06_validate.ipynb
+        - task_key: load_lakebase
+          depends_on:
+            - task_key: validate
+          notebook_task:
+            notebook_path: ./data_synthesis/07_load_lakebase.ipynb
+
+    # Batch pipeline: 1M-incident history → validated silver → handyman scorecards → Lakebase; CV PDFs → text.
+    # Incremental and idempotent (Auto Loader / stream checkpoints, MERGE); every step logs to pipeline_runs.
+    maintops_pipeline:
+      name: maintops_pipeline
+      parameters:
+        - name: run_id
+          default: "{{job.run_id}}"
+      tasks:
+        - task_key: export_raw
+          notebook_task:
+            notebook_path: ./pipeline/10_export_raw.ipynb
+        - task_key: bronze
+          depends_on:
+            - task_key: export_raw
+          notebook_task:
+            notebook_path: ./pipeline/11_bronze.ipynb
+        - task_key: silver
+          depends_on:
+            - task_key: bronze
+          notebook_task:
+            notebook_path: ./pipeline/12_silver.ipynb
+        - task_key: gold_performance
+          depends_on:
+            - task_key: silver
+          notebook_task:
+            notebook_path: ./pipeline/13_gold_performance.ipynb
+        - task_key: gold_feedback
+          depends_on:
+            - task_key: silver
+          notebook_task:
+            notebook_path: ./pipeline/14_gold_feedback.ipynb
+        - task_key: sync_lakebase
+          depends_on:
+            - task_key: gold_performance
+            - task_key: gold_feedback
+          notebook_task:
+            notebook_path: ./pipeline/15_sync_lakebase.ipynb
+        - task_key: parse_cvs
+          notebook_task:
+            notebook_path: ./pipeline/16_parse_cvs.ipynb
+
+    # Real-time stream: Lakebase CDF → silver → affected handymen's scorecards → Lakebase (< 1 min).
+    # Start it for development, demo and grading; cancel the run to stop it (max_minutes 0 = until cancelled).
+    maintops_live:
+      name: maintops_live
+      max_concurrent_runs: 1
+      parameters:
+        - name: run_id
+          default: "{{job.run_id}}"
+        - name: max_minutes
+          default: "0"
+        - name: poll_seconds
+          default: "5"
+      tasks:
+        - task_key: live_stream
+          notebook_task:
+            notebook_path: ./pipeline/20_live_stream.ipynb
+
+    # Manny: log agent/manny.py with MLflow, register it in Unity Catalog and serve it (agents.deploy).
+    maintops_manny_deploy:
+      name: maintops_manny_deploy
+      tasks:
+        - task_key: deploy_manny
+          notebook_task:
+            notebook_path: ./agent/deploy_manny.ipynb
+
+    # Personal Vector Search endpoints are deleted after 6 idle hours: query the index every 4 hours,
+    # and rebuild endpoint + index via maintops_rag if they are gone.
+    maintops_vs_keepalive:
+      name: maintops_vs_keepalive
+      schedule:
+        quartz_cron_expression: "0 0 */4 * * ?"
+        timezone_id: Europe/Berlin
+        pause_status: UNPAUSED   # set explicitly: development mode would pause it otherwise
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: keep_alive
+          notebook_task:
+            notebook_path: ./notebooks/06_keep_vs_alive.ipynb
+            base_parameters:
+              rag_job_id: ${resources.jobs.maintops_rag.id}
