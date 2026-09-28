@@ -1,0 +1,22 @@
+# Local dependencies for running the notebooks in notebooks/ and data_synthesis/ outside Databricks.
+# Python 3.12 is required (serverless compute for Databricks Connect).
+# Do NOT install pyspark alongside databricks-connect — they conflict.
+databricks-connect>=17.0,<18
+databricks-sdk
+ipykernel
+pip
+pandas
+numpy
+requests
+osmium
+argon2-cffi
+reportlab
+langchain-text-splitters
+# Pins mirror notebooks/04_langgraph_agent.ipynb (which installs them on Databricks)
+databricks-langchain==0.16.1
+langchain==1.2.10
+langgraph
+# langgraph-prebuilt==1.0.1 is force-installed with --no-deps after this file (see README.md, "Running notebooks locally")
+mlflow>=3.0
+nest_asyncio
+mcp<2   # langchain-mcp-adapters imports mcp.shared.context.RequestContext, removed in mcp 2.x

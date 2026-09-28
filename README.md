@@ -1,1283 +1,328 @@
-# MaintOps --- Capstone Project README
+# MaintOps
 
-## 1. Project Overview
+AI-powered handyman matching and incident management, built as a Databricks capstone project.
+A client describes a problem in plain language; an agent classifies it and the system recommends the three best-suited handymen (skills, experience, ratings, workload, travel time). The client picks one, the handyman completes the job, and the client's feedback improves future rankings.
 
-**MaintOps** is an AI-powered handyman matching and incident-management
-application built as a Databricks capstone project.
+> **Status:** core workflow implemented end to end — Manny (agent served from Unity Catalog) creates incidents, ranks handymen with real Geoapify travel times and assigns the client's choice; handymen complete jobs; client reviews flow back through Lakebase CDF and a streaming pipeline into the rankings within a minute. See [Rubric evidence](#rubric-evidence) for measured results.
 
-The core workflow is:
+## Architecture at a glance
 
-1.  A client registers and creates an incident in natural language.
-2.  An AI agent interprets the incident, determines its type, urgency,
-    and required skills.
-3.  The system finds suitable handymen using:
-    -   specialisation and skill match,
-    -   experience and historical performance,
-    -   client ratings/feedback,
-    -   current workload,
-    -   geographic travel time.
-4.  Geoapify is used for geocoding and routing.
-5.  The system returns the best three candidates.
-6.  The client makes the final choice.
-7.  The selected handyman sees the assigned incident and handles it.
-8.  The handyman marks the incident as completed.
-9.  The client leaves a rating and textual feedback.
-10. Historical outcomes and feedback influence future recommendations.
+| Layer | Technology | Role |
+|---|---|---|
+| Web app | Flask, Flask-Login, Flask-WTF (CSRF), gunicorn | UI, auth, dashboards, Manny chat widget |
+| Agent | **Manny**: MLflow `ResponsesAgent` registered in UC (`bootcamp_students.maintops.manny`), served by `agents.deploy` (endpoint `maintops-manny`), LLM `databricks-claude-sonnet-4-6` | all AI: FAQ answers (RAG), incident classification + creation, ranking, assignment, feedback, CV profile extraction |
+| Operational store | Lakebase (Postgres) | users, handymen, incidents, app events, handyman scorecards |
+| CDC | Lakebase Change Data Feed → `lb_*_history` Delta tables (~15 s) | feeds the live stream and analytics |
+| Batch pipeline | Spark (Auto Loader, Delta MERGE), `ai_parse_document`, `ai_analyze_sentiment`, `ai_query` | 1M-incident history → validated silver → handyman scorecards; 10k CV PDFs → text |
+| Live pipeline | Spark Structured Streaming on CDF | new reviews → affected handymen's scorecards in Lakebase in < 1 min |
+| Analytics | Lakeflow Declarative Pipeline on CDF | agent / tool / API / guardrail / write-action / incident metrics |
+| RAG | Vector Search (`faq_index` on endpoint `maintops_vs`, `databricks-gte-large-en`) | FAQ retrieval for Manny |
+| Geo | Geoapify Geocoding + Route Matrix | address coordinates, real road travel times |
 
-The application has three user experiences:
+## Repository layout
 
--   **Unregistered visitor** --- can view the main page, learn about
-    MaintOps, ask questions through a RAG assistant, and register.
--   **Registered client** --- can manage their profile, create
-    incidents, view active and historical incidents, select a handyman,
-    and leave feedback.
--   **Handyman** --- can manage their profile, upload/update a CV, view
-    assigned incidents, mark work as completed, and see
-    feedback/statistics.
-
-------------------------------------------------------------------------
-
-## 2. Capstone Requirements Mapping
-
-The project must demonstrate the following:
-
-  -----------------------------------------------------------------------
-  Requirement                         MaintOps implementation
-  ----------------------------------- -----------------------------------
-  Spark data pipeline                 Spark processes large historical
-                                      incident data and derives
-                                      handyman-performance features.
-
-  Third-party API                     Geoapify Geocoding API and Route
-                                      Matrix API.
-
-  Lakebase relational/operational     Current users, handymen, and
-  model                               operational/recent incidents.
-
-  Action-taking AI agent              Agent creates incidents and invokes
-                                      tools used to search/rank handymen
-                                      and support application workflows.
-
-  Analytics pipeline                  Lakebase CDC -\> Spark -\> Delta
-                                      tables for historical/analytical
-                                      data.
-
-  Frontend                            Role-specific application UI.
-
-  Deployment                          Databricks App.
-
-  High Volume                         At least 1,000,000 synthetic
-                                      historical incident records in
-                                      Delta.
-
-  High Variety                        Handyman CVs supplied as
-                                      unstructured PDF/image documents.
-  -----------------------------------------------------------------------
-
-The two primary Big Data Vs are **Volume** and **Variety**.
-
-------------------------------------------------------------------------
-
-## 3. Architectural Principles
-
-### 3.1 Lakebase is the operational store
-
-Lakebase contains the latest relational state required by the
-application.
-
-It answers questions such as:
-
--   Who is this client?
--   What is the handyman's current profile?
--   What incidents are currently open?
--   Which handyman is assigned to an incident?
--   What is the handyman's current workload?
--   Has an incident just been completed?
-
-The MVP intentionally keeps the operational model small:
-
--   `bootcamp_students.maintops_users`
--   `bootcamp_students.maintops_handymen`
--   `bootcamp_students.maintops_incidents`
-
-### 3.2 Unity Catalog / Delta is the historical and analytical store
-
-Delta tables are used for:
-
--   1M+ synthetic historical incidents,
--   long-term incident history,
--   historical handyman performance,
--   derived recommendation features,
--   application/agent analytics.
-
-Do **not** insert 1M synthetic historical incidents into Lakebase merely
-to demonstrate volume.
-
-### 3.3 CDC connects operational and historical data
-
-Changes to operational incidents flow from Lakebase through CDC into the
-lakehouse.
-
-Conceptually:
-
-``` text
-Lakebase maintops_incidents
-          |
-          | CDC
-          v
-        Spark
-          |
-          v
-Delta / Unity Catalog incident history
+```
+app.py                  Flask app: routes, auth, /api/manny proxy, dashboard actions, CV upload
+db.py                   re-exports maintops_core.db (shared Lakebase pool)
+maintops_core/          services shared by the app and the agent
+  incidents.py          incident lifecycle with ownership + transition checks
+  matching.py           find_handymen: filter → pre-filter → Geoapify → deterministic score → top 3
+  geo.py                Geoapify geocoding + route matrix (retries, validation, flagged fallback)
+  rag.py                FAQ vector search
+  events.py             app_events logging (→ CDF → analytics)
+agent/
+  manny.py              the Manny agent (tools, guardrails, tracing)
+  deploy_manny.ipynb    log → register in UC → agents.deploy
+eval/manny_eval.py      MLflow GenAI evaluation of the deployed agent
+pipeline/               Spark pipeline (logic in pipeline_lib.py)
+  10–15                 raw export → bronze → silver (+quarantine) → gold → Lakebase
+  16_parse_cvs          ai_parse_document over the CV PDFs
+  20_live_stream        CDF → scorecards in Lakebase (< 1 min)
+  latency_test.py       burst latency test
+  analytics/            Lakeflow Declarative Pipeline (metrics)
+notebooks/              RAG: 01 schema → 02 parse FAQ → 03 chunk + index → 05 retrieval eval; 06 keep-alive
+data_synthesis/         synthetic data (01–06) and Lakebase load (07)
+sqls/                   base DDL + migrations/ (applied by migrate.py)
+tests/                  unit tests (pytest)
+databricks.yml          Asset Bundle: all jobs and the analytics pipeline
+app.yaml, render.yaml   deployment configs
+requirements.txt        App dependencies
+requirements-notebooks.txt  Local notebook dependencies (Databricks Connect)
 ```
 
-Lakebase remains authoritative for current/recent operational state.
-Delta is used for historical and analytical workloads.
+## Running the app locally
 
-Do not immediately delete a Lakebase incident the moment it becomes
-`completed`. CDC is replication, not a transactional "move." A
-production version can apply a retention policy, for example keeping
-recently completed incidents in Lakebase for 30 days before
-archival/purge.
+Requires Python 3.12 and a reachable Lakebase (Postgres) instance.
 
-For the capstone, physical purging is optional.
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-### 3.4 Current vs historical reads
+export FLASK_APP=app.py
+export FLASK_SECRET_KEY=<random string>
+export LAKEBASE_PG_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
+# Needed for CV parsing:
+export DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
+export DATABRICKS_TOKEN=<personal access token>
 
-Use Lakebase for current operational queries:
-
-``` text
-"My active incidents"
-"My assigned jobs"
-"What is the current status of incident X?"
+flask run --debug
 ```
 
-Use Delta for historical/list/analytical queries:
+The app is served at http://127.0.0.1:5000.
 
-``` text
-"Show all jobs I completed last year"
-"Show my historical incidents"
-"What is this handyman's performance on plumbing incidents?"
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `FLASK_SECRET_KEY` | yes (prod) | Session/CSRF signing key. Defaults to an insecure dev value. |
+| `LAKEBASE_PG_URL` | yes | Postgres connection string for Lakebase (see `db.py`). |
+| `DATABRICKS_HOST` | yes | Workspace URL (Manny endpoint, CV parsing). |
+| `DATABRICKS_TOKEN` | yes | PAT or OAuth token (only the backend holds it). |
+| `MANNY_ENDPOINT` | no | Manny serving endpoint; defaults to `maintops-manny`. |
+| `DATABRICKS_WAREHOUSE_ID` | for CV upload | SQL warehouse that runs `ai_parse_document`. |
+| `GEOAPIFY_API_KEY` | yes | Geoapify key (geocoding on registration / address change). |
+
+On Databricks the agent endpoint and jobs read `LAKEBASE_PG_URL` and `GEOAPIFY_API_KEY` from the secret scope `maintops`.
+
+## Deployment
+
+- **Render (graded):** `render.yaml` runs gunicorn with a `/healthz` health check. Secrets (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `LAKEBASE_PG_URL`, `GEOAPIFY_API_KEY`) are set in the Render dashboard (`sync: false`).
+- **Databricks Apps:** `app.yaml` runs the same gunicorn command on port 8000 with secrets from the app's resources.
+- **Databricks side:** `databricks bundle deploy -p <profile>` deploys every job and the analytics pipeline (`databricks.yml`); `databricks bundle run maintops_manny_deploy` (re)deploys Manny; `python sqls/migrate.py` applies schema migrations.
+
+## Rubric evidence
+
+Measured on 2026-09-28 (tables in `bootcamp_students.maintops` unless noted).
+
+| Area | Evidence |
+|---|---|
+| Spark pipeline | Job `maintops_pipeline`: 1,000,000 incidents → raw JSON with injected defects (1,004,842 rows) → Auto Loader bronze → silver **981,466** clean incidents + **18,534** quarantined with reasons (invalid urgency 5,085 · empty description 4,849 · bad timestamp 3,012 · negative distance 2,936 · rating out of range 2,652) → 23,170 scorecard rows + 9,288 review summaries → Lakebase. Incremental (checkpoints, MERGE); every step logged with checks in `pipeline_runs`. |
+| Third-party API | Geoapify geocoding at registration / address change and one batched Route Matrix call per recommendation; retries on 429/5xx with Retry-After, response validation, fallback estimates flagged `estimated`; every call in `app_events` → `analytics_api_usage_daily`. Unit-tested with mocked HTTP (`tests/`). |
+| Lakebase model | 3 core tables + `app_events` + `handyman_performance` / `handyman_feedback`; PK/FK, 15+ CHECK constraints, handyman-role triggers, duplicate-open-incident guard, `updated_at` triggers, indexes; migrations in `sqls/migrations/`. |
+| Agent | Manny (UC model `manny`, endpoint `maintops-manny`): read tools `search_faq`, `get_my_incidents`, `get_incident`, `find_handymen`, `get_my_jobs`, `get_my_reviews`; write tools `create_incident`, `assign_handyman`, `cancel_incident`, `submit_feedback`, `update_job_status` — confirmation required for consequential actions, identity from the server only. Guardrails (injection refusal, emergency advice, argument validation, grounded-number check, per-session rate limit), MLflow tracing, inference table `manny_payload` (AI Gateway; usage tracking / gateway rate limits are not available for agent endpoints in this workspace, so usage and cost are tracked via `app_events` → analytics), evaluation (`eval/manny_eval.py`). |
+| Analytics | Lakebase CDF → Declarative Pipeline `maintops_analytics` (refreshed every 30 min, expectations): `analytics_agent_requests_hourly` (incl. tokens and estimated cost), `analytics_tool_usage`, `analytics_api_usage_daily`, `analytics_guardrails_daily`, `analytics_write_actions`, `analytics_feature_usage`, `analytics_incident_activity_daily`, `analytics_recommendation_rank`. |
+| Volume | 1M-incident history processed by the Spark pipeline (above). |
+| Velocity | Lakebase write → CDF → stream → scorecards back in Lakebase: burst of **1,000 reviews for 900 handymen fully reflected in 36.8 s** (`pipeline/latency_test.py`); per-batch latency in `latency_metrics`; checkpointed stream (restart-safe). |
+| Variety | 10,000 CV PDFs parsed with `ai_parse_document` (100 % success, `cv_parsed`, text stored in Lakebase); FAQ PDF parsed, chunked and embedded into `faq_index` (retrieval hit@3 = 12/12, `rag_eval_runs`); reviews scored with `ai_analyze_sentiment` and summarised with `ai_query`. |
+
+## Synthetic data (`data_synthesis/`)
+
+Generates realistic data at scale for testing the app and the Spark pipeline: **100,000 client users, 10,000 handymen (users with `is_handyman = true` plus `handyman_details` and PDF CVs) and 1,000,000 incidents**, following the table definitions in `sqls/`. Volumes, table/volume names and the skill taxonomy live in `00_config`, which every other notebook loads via `%run ./00_config`.
+
+Run the notebooks in order on Databricks:
+
+| # | Notebook | Output |
+|---|---|---|
+| 00 | `00_config` | Shared config (not run on its own) |
+| 01 | `01_real_addresses` | Unique real German addresses from OpenStreetMap → `synth_address_pool` |
+| 02 | `02_generate_users` | `synth_users` client rows (same columns as `maintops.users`, `is_handyman = false`) |
+| 03 | `03_generate_handymen` | Handyman rows appended to `synth_users` (`is_handyman = true`), `synth_handyman_details` (same columns as `maintops.handyman_details`), plus `synth_handymen_truth` (hidden quality, structured CV) |
+| 04 | `04_generate_cv_pdfs` | One PDF CV per handyman in the Unity Catalog Volume |
+| 05 | `05_generate_incidents` | `synth_incidents` Delta table (columns of `maintops.incidents`) with Change Data Feed; handyman stats come from the Spark pipeline |
+| 06 | `06_validate` | Read-only PASS/FAIL sanity checks |
+
+Notes:
+- Emails use reserved `example.*` domains, and all synthetic users share the demo password defined in `00_config` (Argon2-hashed). Do not reuse it anywhere real.
+- `01` needs outbound internet access to `download.geofabrik.de`. Address data © OpenStreetMap contributors (ODbL).
+- `00_config.py` is generated from `00_config.ipynb` so `%run ./00_config` also works locally; re-export it whenever the notebook changes.
+
+### Running notebooks locally
+
+`requirements-notebooks.txt` lets you run the notebooks from your IDE through Databricks Connect (serverless). It needs Python 3.12 and a configured Databricks profile. Do not install `pyspark` alongside `databricks-connect`; they conflict.
+
+```bash
+pip install -r requirements-notebooks.txt
+pip install --no-deps langgraph-prebuilt==1.0.1   # must be installed after the file above
 ```
 
-The backend should own this distinction. The frontend should not
-directly decide which storage system to query.
+---
 
-------------------------------------------------------------------------
+# Design
 
-## 4. Lakebase Data Model
+## Workflow and users
 
-Only three operational tables are required for the MVP.
+1. A client registers and describes an incident in natural language.
+2. An AI agent determines its type, urgency and required skills.
+3. The system finds suitable handymen by specialisation and skill match, experience and historical performance, client ratings, current workload and travel time (Geoapify).
+4. The best three candidates are returned; the client makes the final choice.
+5. The handyman sees the assigned incident, handles it and marks it completed.
+6. The client leaves a rating and textual feedback, which influences future recommendations.
 
-### 4.1 Users
+There are three user experiences:
 
-A user is a registered client.
+- **Unregistered visitor:** landing page, information about MaintOps, questions to the RAG assistant (Manny), registration.
+- **Registered client:** profile and address; create incidents, see active and past incidents and their status, view recommended handymen and select one, rate completed work and leave feedback.
+- **Handyman:** profile, upload/update CV and see the extracted specialisations/skills/experience; assigned incidents sorted by urgency, mark them in progress / completed, see feedback and statistics.
 
-Recommended schema:
+## Capstone requirements
 
-``` sql
-CREATE TABLE IF NOT EXISTS bootcamp_students.maintops_users (
-    id BIGINT PRIMARY KEY,
+| Requirement | MaintOps implementation |
+|---|---|
+| Spark data pipeline | Spark processes the large historical incident dataset and derives handyman-performance features |
+| Third-party API | Geoapify Geocoding and Route Matrix APIs |
+| Lakebase operational model | Current users, handymen and recent incidents |
+| Action-taking AI agent | Agent creates incidents and invokes tools that search/rank handymen |
+| Analytics pipeline | Lakebase CDC → Spark → Delta for historical/analytical data |
+| Frontend | Role-specific application UI |
+| Deployment | Databricks App (also deployed on Render) |
+| High Volume | At least 1,000,000 synthetic historical incidents in Delta |
+| High Variety | Handyman CVs supplied as unstructured PDF/image documents |
 
-    email VARCHAR(64) NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
+## Storage principles
 
-    first_name VARCHAR(64) NOT NULL,
-    last_name VARCHAR(64) NOT NULL,
-    date_of_birth DATE,
-    phone VARCHAR(32),
+**Lakebase is the operational store.** It holds the latest relational state: who a client is, a handyman's current profile, open incidents, assignments, current workload.
 
-    house VARCHAR(128),
-    postal_code VARCHAR(32),
-    city VARCHAR(64),
-    state VARCHAR(64),
-    country VARCHAR(64),
+**Unity Catalog / Delta is the historical and analytical store:** the 1M+ synthetic incidents, long-term incident history, historical handyman performance, derived recommendation features and application/agent analytics. Do not load the synthetic history into Lakebase just to demonstrate volume.
 
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION
-);
-```
+**CDC connects them:** Lakebase `incidents` → CDC → Spark → Delta incident history. Lakebase stays authoritative for current state. CDC is replication, not a transactional move, so completed incidents are not deleted from Lakebase immediately; a production version could purge them after e.g. 30 days (optional for the capstone).
 
-An unregistered visitor does not need a `maintops_users` row.
+**Current vs historical reads:** Lakebase answers "my active incidents", "my assigned jobs", "current status of incident X"; Delta answers "jobs I completed last year" or "this handyman's performance on plumbing". The backend owns this distinction, not the frontend.
 
-### 4.2 Handymen
+| Lakebase | Unity Catalog / Delta |
+|---|---|
+| latest user profile | raw CV files (Volume) |
+| latest handyman profile | parsed/historical CV artifacts |
+| active/recent incidents | 1M+ incident history, completed incidents |
+| | handyman performance features, analytics |
 
-The handyman table contains the latest operational profile plus
-information extracted from the current CV.
+## Lakebase data model
 
-``` sql
-CREATE TABLE IF NOT EXISTS bootcamp_students.maintops_handymen (
-    id BIGINT PRIMARY KEY,
+The operational schema is the Postgres schema `maintops` with three tables; the DDL in [`sqls/`](sqls/) is the source of truth.
 
-    email VARCHAR(64) NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
+- **`users`**: every account, clients and handymen alike. Identity `id`, unique `email`, `password_hash`, name, `date_of_birth`, `phone`, address (`house`, `postal_code`, `city`, `state`, `country`), `latitude`/`longitude`, `is_handyman`, `is_active`, `created_at`. Unregistered visitors have no row.
+- **`handyman_details`**: one row per handyman, `user_id` is both primary key and foreign key to `users.id`. Holds `specialisations TEXT[]`, `skills TEXT[]`, `experience_summary`, `cv_path`, `cv_raw_text`, `has_car`, and the performance summary `completed_cases`, `rating_avg` (0–5), `rating_count`, `avg_price`.
+- **`incidents`**: `reported_by_user_id` (client) and `handyman_user_id` (assigned handyman), both foreign keys to `users.id`; `description`, `incident_type`, `urgency` (`low` / `medium` / `high` / `critical`), `recommended_handyman_ids BIGINT[]`, `agent_reasoning`, `distance_km`, `travel_time_minutes`, `status`, `rating` (1–5), `feedback`, and `created_at` / `assigned_at` / `completed_at` / `updated_at`.
 
-    first_name VARCHAR(64) NOT NULL,
-    last_name VARCHAR(64) NOT NULL,
-    phone VARCHAR(32),
+### Specialisations, skills and experience
 
-    house VARCHAR(128),
-    postal_code VARCHAR(32),
-    city VARCHAR(64),
-    state VARCHAR(64),
-    country VARCHAR(64),
+All three are kept:
 
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION,
+- **Specialisations** are a controlled vocabulary used for coarse filtering: `plumbing`, `electrical`, `heating_hvac`, `carpentry`, `painting`, `roofing`, `flooring`, `appliance_repair`, `locksmith`, `general_maintenance`. CV extraction must choose from this list, never invent categories.
+- **Skills** are granular capabilities (pipe repair, leak detection, boiler maintenance, …) used for specific job compatibility.
+- **`experience_summary`** is richer CV-derived text about the handyman's professional experience.
 
-    specialisations TEXT[],
-    skills TEXT[],
-    experience_summary TEXT,
+Filtering goes specialisations → skills → historical performance/experience → feedback, workload and travel time → top candidates. Both lists are stored as `TEXT[]`, not separate tables.
 
-    cv_path TEXT,
-    cv_raw_text TEXT,
+## Authentication
 
-    completed_cases INTEGER NOT NULL DEFAULT 0,
-    rating_avg NUMERIC(3,2) NOT NULL DEFAULT 0,
-    rating_count INTEGER NOT NULL DEFAULT 0,
-    avg_price NUMERIC(10,2),
+Store only an Argon2id `password_hash` (never plaintext or reversibly encrypted passwords). On login, look the account up by email and verify with the Argon2 library's `verify`; never compare hash strings manually and never log passwords. The encoded hash already contains salt and parameters, so no salt column is needed.
 
-    CONSTRAINT chk_handyman_rating
-        CHECK (rating_avg >= 0 AND rating_avg <= 5),
+## Geocoding
 
-    CONSTRAINT chk_handyman_completed_cases
-        CHECK (completed_cases >= 0),
+Clients and handymen give an address at registration. Geoapify forward geocoding turns it into `latitude`/`longitude`, which are stored in `users` so searches never re-geocode. Geocode again only when the address changes. `house` holds street and house number for the MVP.
 
-    CONSTRAINT chk_handyman_rating_count
-        CHECK (rating_count >= 0)
-);
-```
+## Handyman availability
 
-#### Specialisations vs skills vs experience
+Availability is derived from active incidents (`assigned`, `in_progress`), not stored as an `is_available` flag that could drift out of sync. MVP rule: 0 active incidents = highly available, 1 = available, 2 = busy but available, 3+ = unavailable. The threshold should be configurable, and fewer active incidents should also rank higher.
 
-Keep all three.
-
-**Specialisations** are broad controlled categories used for coarse
-filtering.
-
-Examples:
-
-``` text
-plumbing
-electrical
-heating_hvac
-carpentry
-painting
-roofing
-flooring
-appliance_repair
-locksmith
-general_maintenance
-```
-
-They are stored as `TEXT[]` rather than a separate table for the MVP.
-
-**Skills** are granular capabilities, for example:
-
-``` text
-pipe repair
-leak detection
-toilet installation
-radiator repair
-boiler maintenance
-```
-
-They are also stored as `TEXT[]`.
-
-**experience_summary** contains richer CV-derived information describing
-the handyman's professional experience.
-
-The intended hierarchy is:
-
-``` text
-specialisations
-      |
-      v
-coarse filtering
-      |
-      v
-skills
-      |
-      v
-specific job compatibility
-      |
-      v
-historical performance / experience
-      |
-      v
-feedback + workload + travel time
-      |
-      v
-top candidates
-```
-
-The CV extraction logic should select specialisations from a predefined
-controlled taxonomy rather than inventing arbitrary category names.
-
-### 4.3 Incidents
-
-``` sql
-CREATE TABLE IF NOT EXISTS bootcamp_students.maintops_incidents (
-    id BIGINT PRIMARY KEY,
-
-    user_id BIGINT NOT NULL,
-    handyman_id BIGINT,
-
-    description TEXT NOT NULL,
-
-    incident_type VARCHAR(64),
-    urgency VARCHAR(32),
-
-    recommended_handyman_ids BIGINT[],
-    agent_reasoning TEXT,
-
-    distance_km NUMERIC(10,2),
-    travel_time_minutes NUMERIC(10,2),
-
-    status VARCHAR(32) NOT NULL DEFAULT 'open',
-
-    rating INTEGER,
-    feedback TEXT,
-
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    assigned_at TIMESTAMP,
-    completed_at TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT fk_incident_user
-        FOREIGN KEY (user_id)
-        REFERENCES bootcamp_students.maintops_users(id),
-
-    CONSTRAINT fk_incident_handyman
-        FOREIGN KEY (handyman_id)
-        REFERENCES bootcamp_students.maintops_handymen(id),
-
-    CONSTRAINT chk_incident_urgency
-        CHECK (
-            urgency IS NULL
-            OR urgency IN ('low', 'medium', 'high', 'critical')
-        ),
-
-    CONSTRAINT chk_incident_status
-        CHECK (
-            status IN (
-                'open',
-                'recommended',
-                'assigned',
-                'in_progress',
-                'completed',
-                'cancelled'
-            )
-        ),
-
-    CONSTRAINT chk_incident_rating
-        CHECK (
-            rating IS NULL
-            OR rating BETWEEN 1 AND 5
-        )
-);
-```
-
-`recommended_handyman_ids` may be retained if recommendation outcomes
-will later be analyzed. If only the selected handyman matters
-operationally, it can be removed later.
-
-------------------------------------------------------------------------
-
-## 5. Authentication and Password Handling
-
-Never store plaintext passwords and do not store reversibly encrypted
-passwords.
-
-Store only a password hash:
-
-``` sql
-password_hash TEXT NOT NULL
-```
-
-Use **Argon2id** in the application backend.
-
-Registration:
-
-``` text
-plaintext password
-      |
-      v
-Argon2id hash
-      |
-      v
-password_hash stored in Lakebase
-```
-
-Login:
-
-1.  Find the account by email.
-2.  Retrieve `password_hash`.
-3.  Use the Argon2 library's verification method against the submitted
-    password.
-4.  Never compare a newly generated hash string manually.
-5.  Never log plaintext passwords.
-
-The Argon2 encoded hash contains the salt and algorithm parameters, so a
-separate `salt` database column is unnecessary.
-
-Python example:
-
-``` python
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
-
-ph = PasswordHasher()
-
-# Registration
-password_hash = ph.hash(password)
-
-# Login
-try:
-    ph.verify(stored_password_hash, submitted_password)
-    authenticated = True
-except VerifyMismatchError:
-    authenticated = False
-```
-
-------------------------------------------------------------------------
-
-## 6. Address Geocoding with Geoapify
-
-Both clients and handymen provide an address during registration.
-
-Geoapify provides the required **forward geocoding** capability, so no
-second geolocation provider is required.
-
-Flow:
-
-``` text
-registration / address update
-        |
-        v
-address fields
-        |
-        v
-Geoapify Geocoding
-        |
-        v
-latitude + longitude
-        |
-        v
-store coordinates in Lakebase
-```
-
-Coordinates must be persisted so the application does not geocode the
-same address during every handyman search.
-
-Both `maintops_users` and `maintops_handymen` therefore contain:
-
-``` sql
-latitude DOUBLE PRECISION,
-longitude DOUBLE PRECISION
-```
-
-When an address changes, geocode it again and update the stored
-coordinates.
-
-The existing `house` field can contain the street/house address for the
-MVP. A future version may separate `street` and `house_number`.
-
-------------------------------------------------------------------------
-
-## 7. Handyman Availability
-
-Do not store a simple `is_available` boolean if availability is defined
-by current workload. It can become inconsistent with the incident table.
-
-Derive availability from active incidents.
-
-Example MVP rule:
-
-``` text
-0 active incidents -> highly available
-1 active incident  -> available
-2 active incidents -> available but busy
-3+ active incidents -> unavailable
-```
-
-An active incident is one whose status is, for example:
-
-``` text
-assigned
-in_progress
-```
-
-Example query:
-
-``` sql
-SELECT
-    h.id,
-    h.first_name,
-    h.last_name,
-    COUNT(i.id) AS active_incidents
-FROM bootcamp_students.maintops_handymen h
-LEFT JOIN bootcamp_students.maintops_incidents i
-    ON h.id = i.handyman_id
-   AND i.status IN ('assigned', 'in_progress')
-GROUP BY
-    h.id,
-    h.first_name,
-    h.last_name
+```sql
+SELECT u.id, u.first_name, u.last_name, COUNT(i.id) AS active_incidents
+FROM maintops.users u
+JOIN maintops.handyman_details h ON h.user_id = u.id
+LEFT JOIN maintops.incidents i
+       ON i.handyman_user_id = u.id
+      AND i.status IN ('assigned', 'in_progress')
+GROUP BY u.id, u.first_name, u.last_name
 HAVING COUNT(i.id) < 3;
 ```
 
-Current workload should also be a ranking signal: all else being equal,
-a handyman with zero active incidents should rank above one with two.
+## Handyman search and recommendation
 
-The threshold is an MVP business rule and should be configurable rather
-than deeply hard-coded.
+The LLM handles semantic understanding; deterministic code handles filtering, routing, scoring and ranking. The LLM never invents scores or scans every handyman.
 
-------------------------------------------------------------------------
+1. **Classification (agent).** "Water is leaking from a pipe under my kitchen sink" becomes `incident_type = plumbing`, `urgency = high`, `required_skills = [pipe repair, leak detection]`. The agent creates/updates the incident and calls the search tool.
+2. **Candidate filtering (Lakebase)** by specialisation, skills, workload and other operational constraints.
+3. **Geographic pre-filter.** For large candidate sets, compute straight-line (Haversine) distance from stored coordinates and keep the nearest ~20. Never call Geoapify for every handyman.
+4. **Geoapify Route Matrix** for the shortlist: real road distance and travel time, all origins in one batched request (mind the API's coordinate order).
+5. **Deterministic scoring** with configurable initial weights:
 
-## 8. Handyman Search and Recommendation
+   | Signal | Weight |
+   |---|---|
+   | Skill / incident match | 35% |
+   | Similar successful cases (from Delta) | 30% |
+   | Historical feedback | 20% |
+   | Current workload | 10% |
+   | Travel time | 5% |
 
-Do not ask the LLM to inspect every handyman and invent a ranking.
+6. **Top 3** are shown; the client selects one.
 
-The LLM should handle semantic understanding. Deterministic
-application/data logic should handle filtering, routing, scoring, and
-ranking.
+The agent-facing abstraction is a single tool, `find_handymen(incident_id: int)`, which reads the incident and client coordinates, finds matching non-overloaded handymen, pre-filters geographically, calls the Route Matrix, fetches historical performance features, scores and returns the top three. The LLM does not orchestrate individual SQL queries and HTTP calls.
 
-### 8.1 Agent responsibilities
+## Incident lifecycle
 
-For a client request such as:
+`open` → `recommended` → `assigned` → `in_progress` → `completed` (`cancelled` is allowed where appropriate).
 
-> Water is leaking from a pipe under my kitchen sink.
+1. Client submits a free-text description; the agent determines type and urgency and the incident is created in Lakebase.
+2. The search tool returns three candidates; the client selects one, `handyman_user_id` is set and the status becomes `assigned`.
+3. The handyman sees it among their active jobs, may move it to `in_progress`, then marks it `completed`.
+4. The client provides `rating` and `feedback`.
+5. The outcome flows through CDC into Delta and into future performance features.
 
-the agent should derive structured information such as:
+## Historical data and Spark
 
-``` text
-incident_type = plumbing
-urgency = high
-required_specialisation = plumbing
-required_skills = [pipe repair, leak detection]
-```
+Spark is used for the historical incident dataset, not for the synchronous CV-registration path. Over the 1M+ incidents it cleans and validates records, derives resolution times, aggregates by handyman and incident type, and computes completion/success rates and average ratings. The result is a precomputed handyman performance table (e.g. `handyman_id`, `incident_type`, `jobs_completed`, `successful_jobs`, `average_rating`, `average_resolution_time`) that recommendation queries read; the raw history is never scanned per request.
 
-It then creates/updates the incident and invokes the handyman-search
-tool.
+The Delta history also feeds incident analytics, recommendation-quality analysis and agent cost analytics: requests per user, input/output/total tokens, estimated model cost per request and per user, resolution time, rank of the selected recommendation, handyman rating and recommendation success.
 
-### 8.2 Candidate filtering
+## CV upload and processing
 
-First query Lakebase for plausible candidates based on:
+CVs (PDFs and images) are the High Variety component. Processing is synchronous and separate from Spark, since a handyman expects a usable profile right after registering:
 
--   specialisation,
--   skills,
--   workload/availability,
--   other operational constraints.
+1. The original file is stored in a Unity Catalog Volume.
+2. `ai_parse_document` turns it into structured document content.
+3. A separate AI extraction step maps it to specialisations (from the controlled vocabulary), skills and an experience summary.
+4. The latest structured result, `cv_path` and any parsed text the app needs are written to `handyman_details`.
 
-Do not call Geoapify for every handyman in the database.
+Parsing and extraction are separate steps: parsing does not produce the final profile.
 
-### 8.3 Geographic pre-filter
+## RAG assistant for visitors
 
-For a large candidate set, use the stored latitude/longitude to
-calculate approximate straight-line distance, for example using the
-Haversine formula.
+Unregistered visitors can ask Manny questions without an account. The informational documents are parsed, chunked and indexed for vector retrieval (`notebooks/02`–`03`), and a LangGraph agent answers from them (`notebooks/04`). It is informational only and needs no user record.
 
-Use this only as a cheap pre-filter.
+## Feedback loop
 
-Example:
+Recommendation → client selection → completed work → rating and feedback → historical Delta data → Spark-derived performance → future recommendations. For the MVP the numeric rating feeds performance features directly; textual feedback can later be summarised for richer signals.
 
-``` text
-500 matching handymen
-        |
-        v
-approximate geographic distance
-        |
-        v
-nearest ~20 plausible candidates
-        |
-        v
-Geoapify Route Matrix
-```
+## Responsibility boundaries
 
-### 8.4 Geoapify Route Matrix
+| Component | Use for | Not for |
+|---|---|---|
+| LLM / agent | understanding descriptions, incident type, urgency, required skills, choosing tools, user-facing explanations | numeric scores, distances, scanning history, comparing thousands of profiles |
+| Deterministic code | SQL filtering, workload, Haversine pre-filter, Geoapify calls, ranking, DB writes, authentication, authorization | |
+| Spark | historical processing, cleaning, aggregation, feature generation, CDC into Delta, analytics | a single CV upload |
+| Lakebase | current users, handyman profiles, current/recent incidents, transactional writes | the 1M+ history |
+| Delta / Unity Catalog | historical incidents, derived features, analytics, raw/unstructured files | |
+| Geoapify | forward geocoding, Route Matrix for shortlisted handymen | |
 
-Use Geoapify Route Matrix for the shortlisted candidates to calculate
-real road:
+## Implementation rules
 
--   distance,
--   travel time.
+Unless the requirements change explicitly:
 
-Send multiple handyman origins and the client destination in one matrix
-request instead of making one request per handyman.
+1. Keep the Lakebase operational schema to the three tables `users`, `handyman_details` and `incidents`.
+2. Do not create separate tables for specialisations or skills; store them as arrays in `handyman_details`.
+3. Treat specialisations as a controlled vocabulary.
+4. Never store plaintext passwords; use `password_hash` with Argon2id.
+5. Never log passwords or secrets. Keep API keys and credentials in environment variables/secrets, never in source code.
+6. Geocode addresses on registration or address change, persist the coordinates, and never re-geocode unchanged addresses.
+7. Derive handyman availability from assigned/in-progress incidents instead of an `is_available` flag.
+8. Filter candidates by specialisation, skills and workload before any routing call; for large sets pre-filter geographically before calling Geoapify.
+9. Batch Geoapify Route Matrix requests rather than one per handyman.
+10. Travel time is a ranking feature, not the dominant criterion.
+11. Ranking scores are calculated by deterministic code; the agent understands language and invokes tools but never invents operational facts.
+12. The client makes the final choice among recommended handymen.
+13. Keep active/current state in Lakebase and high-volume history and analytics in Delta/Unity Catalog; never put the 1M+ synthetic dataset into Lakebase.
+14. Propagate incident changes to Delta through CDC/Spark, and do not delete completed incidents from Lakebase just because CDC copied them.
+15. Use Spark only for workloads that justify it (historical transformation/aggregation, CDC analytics), never per CV upload.
+16. Store raw CV files in a Unity Catalog Volume, parse/extract during registration or update, write the latest result to `handyman_details`, and keep parsing separate from field extraction.
+17. The visitor RAG assistant uses the MaintOps knowledge base and does not require registration.
+18. Parameterise all database access; never build SQL from raw user input.
+19. Enforce authorization in the backend: clients only see their own profile and incidents, handymen only incidents assigned to them unless a workflow explicitly requires otherwise.
 
-Be careful with coordinate ordering expected by the API.
+## MVP scope
 
-### 8.5 Ranking
+Prioritise a complete working vertical slice over extra normalisation or infrastructure. The MVP is done when it demonstrates:
 
-Travel time should not dominate the recommendation. The primary
-objective is finding someone likely to solve the problem correctly.
+registration → address geocoding → handyman CV processing → incident creation → AI classification → candidate search → Geoapify routing → top-3 recommendation → client selection → handyman workflow → completion → feedback → CDC / Delta history → Spark historical-performance pipeline.
 
-A reasonable initial scoring concept is:
-
-``` text
-Skill / incident match       35%
-Similar successful cases     30%
-Historical feedback          20%
-Current workload             10%
-Travel time                   5%
-```
-
-These weights are initial product assumptions and should be easy to
-configure.
-
-Do not ask the LLM to invent numeric scores. Calculate them
-deterministically.
-
-The final flow is:
-
-``` text
-client incident
-      |
-      v
-LLM classification
-      |
-      v
-Lakebase candidate filtering
-      |
-      v
-approximate geographic pre-filter
-      |
-      v
-Geoapify Route Matrix
-      |
-      + historical performance from Delta
-      |
-      v
-deterministic scoring
-      |
-      v
-top 3 handymen
-      |
-      v
-client makes final selection
-```
-
-A good agent-facing abstraction is a tool such as:
-
-``` python
-find_handymen(incident_id: int)
-```
-
-Internally, that tool can:
-
-1.  Read the incident.
-2.  Read client coordinates.
-3.  Find handymen with matching specialisations/skills.
-4.  Exclude overloaded handymen.
-5.  Pre-filter geographically.
-6.  Call Geoapify Route Matrix.
-7.  Retrieve historical performance features.
-8.  Calculate candidate scores.
-9.  Return the top three.
-
-The LLM should not need to orchestrate every SQL query and HTTP request
-individually.
-
-------------------------------------------------------------------------
-
-## 9. Incident Lifecycle
-
-The intended lifecycle is:
-
-``` text
-open
-  |
-  v
-recommended
-  |
-  v
-assigned
-  |
-  v
-in_progress
-  |
-  v
-completed
-```
-
-`cancelled` is also permitted where appropriate.
-
-Detailed workflow:
-
-1.  Registered client submits a free-text problem description.
-2.  Agent determines incident type and urgency.
-3.  A new incident is created in Lakebase.
-4.  Agent invokes the handyman-search logic.
-5.  Three candidates are returned.
-6.  Client selects one.
-7.  `handyman_id` is written to the incident.
-8.  Incident becomes `assigned`.
-9.  Handyman sees it in their active-jobs page.
-10. Handyman may move it to `in_progress`.
-11. Handyman marks it `completed`.
-12. Client provides `rating` and `feedback`.
-13. The new outcome flows through CDC to historical Delta data.
-14. Future historical-performance features incorporate the new outcome.
-
-------------------------------------------------------------------------
-
-## 10. Historical Incident Data and Spark
-
-Spark should **not** be forced into the synchronous CV-registration
-path.
-
-The strongest Spark use case is the large historical incident dataset.
-
-Create at least 1,000,000 synthetic historical incidents in the
-lakehouse and use Spark to:
-
--   clean and validate records,
--   transform fields,
--   derive resolution times,
--   aggregate incidents by handyman and incident type,
--   calculate completion/success statistics,
--   calculate average ratings,
--   derive features useful for ranking.
-
-Conceptual pipeline:
-
-``` text
-1M+ historical incidents
-          |
-          v
-        Spark
-          |
-          + clean
-          + transform
-          + enrich
-          + aggregate
-          |
-          v
-handyman performance Delta table
-          |
-          v
-handyman recommendation logic
-```
-
-Do not query all one million historical rows every time a user creates
-an incident.
-
-Precompute features such as:
-
-``` text
-handyman_id
-incident_type
-jobs_completed
-successful_jobs
-average_rating
-average_resolution_time
-```
-
-These derived features are then queried during recommendation.
-
-------------------------------------------------------------------------
-
-## 11. CDC / Analytics Pipeline
-
-New application incidents originate in Lakebase.
-
-Changes are captured through CDC and processed into Delta.
-
-``` text
-Lakebase incidents
-       |
-      CDC
-       |
-       v
-     Spark
-       |
-       v
-Delta incident history
-```
-
-The historical Delta dataset can then feed:
-
--   handyman performance aggregation,
--   incident analytics,
--   recommendation-quality analysis,
--   application usage analytics.
-
-Agent/token-cost analytics should also be supported so that future
-API/application pricing can be estimated.
-
-Useful metrics include:
-
--   requests per user,
--   input tokens,
--   output tokens,
--   total tokens,
--   estimated model cost,
--   cost per request,
--   cost per user,
--   incident resolution time,
--   selected recommendation rank,
--   handyman rating,
--   recommendation success.
-
-------------------------------------------------------------------------
-
-## 12. CV Upload and Processing
-
-CVs provide the **High Variety** component of the capstone.
-
-Supported input is expected to include PDFs and images.
-
-### 12.1 Do not launch a Spark job for every CV
-
-A handyman expects their profile to become usable shortly after
-registration. Starting a distributed Spark pipeline for every single
-upload is unnecessary and can create excessive job-trigger overhead.
-
-The CV processing path should therefore be separate from the Spark
-historical-data pipeline.
-
-### 12.2 Intended flow
-
-``` text
-handyman registration
-        |
-        + normal profile fields
-        |
-        + CV upload
-              |
-              v
-        UC Volume / raw file
-              |
-              v
-      document parsing capability
-              |
-              v
-      structured CV content
-              |
-              v
-      AI extraction/classification
-              |
-              + specialisations
-              + skills
-              + experience summary
-              |
-              v
-       update latest profile
-       in maintops_handymen
-```
-
-The original CV remains in Unity Catalog storage. Lakebase stores only
-the latest operational profile and references such as `cv_path` plus any
-parsed text needed by the application.
-
-### 12.3 Databricks document parsing
-
-The intended Databricks capability is `ai_parse_document`.
-
-For application-style synchronous processing, prefer the supported
-document-parsing API/interface rather than starting a Spark job merely
-to parse one CV.
-
-Document parsing and information extraction are conceptually separate:
-
-``` text
-CV
- |
- v
-ai_parse_document
- |
- v
-parsed/structured document
- |
- v
-AI extraction/classification
- |
- v
-specialisations + skills + experience_summary
-```
-
-The extraction step must map specialisations to the application's
-controlled taxonomy.
-
-Do not assume that document parsing itself has already produced the
-final handyman profile.
-
-------------------------------------------------------------------------
-
-## 13. Raw vs Operational CV Data
-
-Keep storage responsibilities separate.
-
-### Unity Catalog / Volume
-
-Store:
-
--   original CV file,
--   potentially parsed/intermediate document data,
--   historical/raw artifacts where useful.
-
-### Lakebase
-
-Store the latest operational handyman representation:
-
--   personal/profile information,
--   coordinates,
--   specialisations,
--   skills,
--   experience summary,
--   CV path/reference,
--   current performance summary fields.
-
-This follows the broader architectural rule:
-
-``` text
-LAKEBASE                     UNITY CATALOG / DELTA
---------                     ---------------------
-latest user profile          raw CV files
-latest handyman profile      parsed/historical CV artifacts
-active/recent incidents      1M+ incident history
-                             completed incident history
-                             handyman performance features
-                             analytics
-```
-
-------------------------------------------------------------------------
-
-## 14. RAG Assistant for Unregistered Visitors
-
-Unregistered visitors can ask questions about MaintOps before creating
-an account.
-
-Implementation plan:
-
-1.  Build the unregistered-user frontend/main page.
-2.  Create one or more documents containing the information the
-    assistant is allowed to use.
-3.  Chunk the documents.
-4.  Store/index the chunks for vector retrieval.
-5.  Create an agent/RAG assistant that answers unregistered-user
-    questions using those documents.
-
-This assistant is informational. It does not require an operational user
-record.
-
-------------------------------------------------------------------------
-
-## 15. Frontend
-
-### Unregistered visitor
-
-Main page should provide:
-
--   explanation of MaintOps,
--   registration options,
--   RAG question/answer interface.
-
-### Registered client
-
-At minimum:
-
-**Profile page** - view/update personal information, - view/update
-address.
-
-**Incidents page** - create incident, - see active incidents, - see
-status, - view recommended handymen, - select handyman, - see
-completed/history records, - rate completed work, - leave textual
-feedback.
-
-### Handyman
-
-At minimum:
-
-**Profile page** - view/update personal data, - upload/update CV, - see
-extracted specialisations/skills/experience information.
-
-**Assigned incidents page** - see assigned work, - sort/prioritize by
-urgency, - mark work in progress, - mark work completed, - view client
-feedback/statistics.
-
-------------------------------------------------------------------------
-
-## 16. Feedback Loop
-
-Feedback is part of the recommendation system, not merely UI data.
-
-``` text
-recommend handyman
-       |
-       v
-client selects
-       |
-       v
-work completed
-       |
-       v
-rating + textual feedback
-       |
-       v
-historical Delta data
-       |
-       v
-Spark-derived performance
-       |
-       v
-future recommendations
-```
-
-Historical feedback and outcomes should affect future candidate ranking.
-
-For the MVP, quantitative rating can directly influence derived
-performance features. Textual feedback can later be summarized or
-evaluated for richer signals.
-
-------------------------------------------------------------------------
-
-## 17. Recommended Responsibility Boundaries
-
-### LLM / AI agent
-
-Use for:
-
--   understanding free-text incident descriptions,
--   classifying incident type,
--   estimating urgency from the provided description,
--   identifying required specialisation/skills,
--   deciding which application tool to invoke,
--   generating user-facing explanations.
-
-Do not use it for:
-
--   inventing numeric ranking scores,
--   manually calculating distances,
--   scanning all historical incidents on every request,
--   directly comparing thousands of handyman profiles one by one.
-
-### Deterministic application/tool logic
-
-Use for:
-
--   SQL filtering,
--   workload calculation,
--   Haversine/geographic pre-filtering,
--   Geoapify calls,
--   ranking formulas,
--   database writes,
--   authentication,
--   authorization.
-
-### Spark
-
-Use for:
-
--   large-scale historical incident processing,
--   cleaning/transformation,
--   aggregations,
--   feature generation,
--   CDC processing into Delta,
--   analytics pipelines.
-
-Do not use Spark simply because a single user uploaded one CV.
-
-### Lakebase
-
-Use for:
-
--   current users,
--   current handyman profiles,
--   current/recent incident state,
--   transactional writes.
-
-### Delta / Unity Catalog
-
-Use for:
-
--   high-volume historical incidents,
--   long-term incident history,
--   derived historical features,
--   analytics,
--   raw/unstructured storage where appropriate.
-
-### Geoapify
-
-Use for:
-
--   forward geocoding: address -\> latitude/longitude,
--   Route Matrix: shortlisted handyman coordinates -\> road
-    distance/travel time to client.
-
-------------------------------------------------------------------------
-
-## 18. Implementation Rules for Code Generation
-
-When generating code for MaintOps, follow these rules unless the project
-requirements are explicitly changed:
-
-1.  Keep the Lakebase operational schema centered on exactly three core
-    tables: `maintops_users`, `maintops_handymen`, and
-    `maintops_incidents`.
-2.  Do not create extra normalized tables for specialisations or skills
-    unless explicitly requested.
-3.  Store `specialisations` and `skills` as arrays in
-    `maintops_handymen`.
-4.  Treat specialisations as a controlled vocabulary.
-5.  Never store plaintext passwords. Use `password_hash` and Argon2id.
-6.  Never log passwords or secrets.
-7.  Keep Geoapify API keys and other credentials in environment
-    variables/secrets, never source code.
-8.  Geocode addresses when a user/handyman registers or changes address,
-    then persist coordinates.
-9.  Do not repeatedly geocode unchanged addresses.
-10. Derive handyman availability from current assigned/in-progress
-    incidents rather than maintaining a redundant `is_available` flag.
-11. Use specialisation/skills and workload to filter candidates before
-    external routing calls.
-12. For large candidate sets, geographically pre-filter before calling
-    Geoapify.
-13. Use Geoapify Route Matrix in batches rather than one API request per
-    handyman where possible.
-14. Travel time is a ranking feature, not the dominant criterion.
-15. Let deterministic code calculate ranking scores.
-16. Let the AI agent understand natural language and invoke tools; do
-    not let it invent operational facts.
-17. The client makes the final choice among recommended handymen.
-18. Keep active/current state in Lakebase.
-19. Keep high-volume historical data and analytics in Delta/Unity
-    Catalog.
-20. Propagate operational incident changes to Delta through CDC/Spark.
-21. Do not immediately delete completed incidents from Lakebase merely
-    because CDC copied them.
-22. Do not put the 1M+ synthetic historical dataset into Lakebase.
-23. Use Spark for workloads that justify distributed processing,
-    particularly historical incident transformation/aggregation and CDC
-    analytics.
-24. Do not start a Spark job for each CV upload.
-25. Store raw CV files outside Lakebase, preferably in a Unity Catalog
-    Volume.
-26. Parse/extract CV information during registration/update and write
-    the latest structured result to `maintops_handymen`.
-27. Preserve clear separation between document parsing and semantic
-    field extraction.
-28. RAG for unregistered visitors should use the MaintOps informational
-    knowledge base and should not require registration.
-29. All database access should be parameterized; do not construct SQL
-    from raw user input.
-30. Validate authorization in the backend: a client can only access
-    their own private incident/profile data, and a handyman can only
-    access incidents assigned to them unless a workflow explicitly
-    requires otherwise.
-
-------------------------------------------------------------------------
-
-## 19. End-to-End Architecture
-
-``` text
-                         MAINTOPS FRONTEND
-                               |
-          +--------------------+--------------------+
-          |                    |                    |
-   Unregistered            Registered            Handyman
-     visitor                 client
-          |                    |                    |
-       RAG Q&A             Create incident       Upload CV
-                               |                    |
-                               |                    v
-                               |                UC Volume
-                               |                    |
-                               |                    v
-                               |            Document parsing
-                               |                    |
-                               |                    v
-                               |             AI extraction
-                               |                    |
-                               |                    v
-                               |          latest handyman profile
-                               |                    |
-                               +---------+----------+
-                                         |
-                                         v
-                                      LAKEBASE
-                           users / handymen / incidents
-                                         |
-                   +---------------------+---------------------+
-                   |                                           |
-                   v                                           v
-             AI AGENT / TOOLS                                CDC
-                   |                                           |
-        understand incident                                    v
-        determine urgency                                    SPARK
-        required skills                                        |
-                   |                                           v
-                   v                                  DELTA / UNITY CATALOG
-           Candidate filtering                       historical incidents
-                   |                                  1M+ synthetic data
-                   |                                  analytics
-                   +----------+                       performance features
-                              |
-                              v
-                           Geoapify
-                       Route Matrix API
-                              |
-                              v
-                  deterministic ranking
-                              |
-                              v
-                         TOP 3 HANDYMEN
-                              |
-                              v
-                       CLIENT SELECTS ONE
-                              |
-                              v
-                     HANDYMAN COMPLETES JOB
-                              |
-                              v
-                       RATING + FEEDBACK
-                              |
-                              v
-                     CDC / historical data
-                              |
-                              v
-                    future recommendations
-```
-
-------------------------------------------------------------------------
-
-## 20. MVP Scope
-
-Prioritize a complete working vertical slice over unnecessary
-normalization or infrastructure.
-
-The MVP is successful when it demonstrates:
-
-``` text
-registration
-    ->
-address geocoding
-    ->
-handyman CV processing
-    ->
-incident creation
-    ->
-AI classification
-    ->
-candidate search
-    ->
-Geoapify routing
-    ->
-top-3 recommendation
-    ->
-client selection
-    ->
-handyman workflow
-    ->
-completion
-    ->
-feedback
-    ->
-CDC / Delta history
-    ->
-Spark historical-performance pipeline
-```
-
-Keep future sophistication out of the critical path unless required for
-the capstone.
+Keep further sophistication out of the critical path unless the capstone requires it.
