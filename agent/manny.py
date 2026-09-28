@@ -94,6 +94,22 @@ TOOLS = {
                             "feedback": {"type": "string"}}, ["incident_id", "rating"]),
     "get_my_jobs": _fn("get_my_jobs", "List the handyman's assigned jobs, most urgent first."),
     "get_my_reviews": _fn("get_my_reviews", "The handyman's recent ratings and their review summary."),
+    "search_my_reviews": _fn(
+        "search_my_reviews", "Find the handyman's own rated jobs, e.g. the worst- or best-rated ones. Use for "
+        "requests to see jobs or reviews ('show my worst feedback', 'my low-rated plumbing jobs'). The app shows "
+        "the returned jobs as a list.",
+        {"order": {"type": "string", "enum": list(inc.REVIEW_ORDERS),
+                   "description": "worst = lowest rating first, best = highest first, recent = newest first"},
+         "incident_type": {"type": "string", "enum": inc.SPECIALISATIONS},
+         "min_rating": {"type": "integer", "minimum": 1, "maximum": 5},
+         "max_rating": {"type": "integer", "minimum": 1, "maximum": 5},
+         "limit": {"type": "integer", "minimum": 1, "maximum": inc.MAX_REVIEW_RESULTS}},
+        ["order"]),
+    "get_my_performance": _fn(
+        "get_my_performance", "The handyman's scorecard: overall and per job type (success rate, rating, "
+        "resolution time, cancellations), review sentiment and summary, the strongest and weakest job type as "
+        "computed by MaintOps, and recent low- and top-rated review texts. Use for questions about strengths, "
+        "weaknesses or how customers see them."),
     "update_job_status": _fn("update_job_status", "Move one of the handyman's jobs to in_progress or completed.",
                              {"incident_id": {"type": "integer"},
                               "status": {"type": "string", "enum": ["in_progress", "completed"]},
@@ -103,7 +119,8 @@ ROLE_TOOLS = {
     "visitor": ["search_faq"],
     "client": ["search_faq", "get_my_incidents", "get_incident", "create_incident", "find_handymen",
                "assign_handyman", "cancel_incident", "submit_feedback"],
-    "handyman": ["search_faq", "get_my_jobs", "get_incident", "get_my_reviews", "update_job_status"],
+    "handyman": ["search_faq", "get_my_jobs", "get_incident", "get_my_reviews", "search_my_reviews",
+                 "get_my_performance", "update_job_status"],
 }
 CONFIRM_REQUIRED = {"assign_handyman", "cancel_incident", "update_job_status"}
 
@@ -147,7 +164,19 @@ After a completed job, you can record their rating and review with submit_feedba
     "handyman": _BASE + """
 The user is a logged-in handyman. Help them see their jobs (get_my_jobs), details, and reviews
 (get_my_reviews), and update job status. Before update_job_status, ask for explicit confirmation and only
-then call it with confirm=true.""",
+then call it with confirm=true.
+Questions about their feedback:
+- To see specific jobs ("worst feedback", "best reviews", "low-rated plumbing jobs") call search_my_reviews. The app
+  shows the returned jobs as a list, so do NOT repeat them; in 1–3 sentences name the pattern you see (recurring
+  complaints or praise). If nothing matches, say so.
+- For strengths, weaknesses or how customers see them, call get_my_performance. If the comparison says there is
+  not enough data, say so instead of guessing; if clear_difference is false, say the job types perform about the
+  same and let the review themes be the answer.
+  - Weaknesses: use the weakest job type, recurring complaints in review_summary and low_rated_reviews, and end with
+    one concrete, practical suggestion drawn from the complaints.
+  - Strengths: use the strongest job type, praise in review_summary and top_rated_reviews (you may quote one short
+    review). Do not add complaints or tips unless they ask.
+  - Both or a general question: cover both sides briefly.""",
 }
 
 CV_PROMPT = f"""You extract a handyman profile from CV text. Return ONLY valid JSON, no markdown:
@@ -171,6 +200,16 @@ def _text_of(content) -> str:
     return ""
 
 
+def _percent_values(obj) -> set[str]:
+    """Every *_percent value in a tool result, as strings (for the number guardrail)."""
+    if isinstance(obj, dict):
+        found = {str(v) for k, v in obj.items() if k.endswith("_percent") and v is not None}
+        return found.union(*(_percent_values(v) for v in obj.values()))
+    if isinstance(obj, list):
+        return set().union(*(_percent_values(v) for v in obj))
+    return set()
+
+
 class MannyAgent(ResponsesAgent):
     def __init__(self):
         self._client = None
@@ -190,7 +229,8 @@ class MannyAgent(ResponsesAgent):
         if role != "visitor" and not isinstance(user_id, int):
             role, user_id = "visitor", None               # no trusted identity → visitor capabilities only
         ctx = {"role": role, "user_id": user_id, "request_id": ci.get("request_id") or str(uuid.uuid4()),
-               "candidates": None, "incident_id": None, "actions": [], "tokens": [0, 0]}
+               "candidates": None, "incident_id": None, "actions": [], "tokens": [0, 0],
+               "incidents": None, "grounded_percents": set()}
         started = time.time()
         mlflow.update_current_trace(tags={"role": role, "task": ci.get("task", "chat"),
                                           "request_id": ctx["request_id"]})
@@ -204,7 +244,7 @@ class MannyAgent(ResponsesAgent):
                        if m.get("role") in ("user", "assistant")][-MAX_HISTORY:]
             reply = self._chat(history, ctx)
             custom = {"candidates": ctx["candidates"], "incident_id": ctx["incident_id"],
-                      "actions": ctx["actions"]}
+                      "actions": ctx["actions"], "incidents": ctx["incidents"]}
 
         log_event("agent_request", ci.get("task", "chat"), True, user_id=user_id, request_id=ctx["request_id"],
                   incident_id=ctx["incident_id"], latency_ms=int((time.time() - started) * 1000),
@@ -361,6 +401,16 @@ class MannyAgent(ResponsesAgent):
             return {"jobs": inc.list_handyman_jobs(uid)}
         if name == "get_my_reviews":
             return inc.get_handyman_reviews(uid)
+        if name == "search_my_reviews":
+            rows = inc.search_handyman_reviews(
+                uid, str(a["order"]), a.get("incident_type"), a.get("min_rating"), a.get("max_rating"),
+                a.get("limit", 10))
+            ctx["incidents"] = rows                      # shown as a list by the app
+            return {"count": len(rows), "incidents": rows}
+        if name == "get_my_performance":
+            out = inc.get_handyman_performance(uid)
+            ctx["grounded_percents"] |= _percent_values(out)
+            return out
         if name == "update_job_status":
             out = inc.update_job_status(uid, as_int("incident_id"), str(a["status"]))
             ctx["actions"].append({"action": "update_job_status", **out})
@@ -369,14 +419,16 @@ class MannyAgent(ResponsesAgent):
 
     # ── output guardrail ─────────────────────────────────────
     def _check_numbers(self, reply: str, ctx: dict) -> str:
-        """Percentages quoted about candidates must come from find_handymen; otherwise flag it."""
-        if not ctx["candidates"]:
+        """Percentages quoted about candidates or a scorecard must come from the tools; otherwise flag it."""
+        if not ctx["candidates"] and not ctx["grounded_percents"]:
             return reply
-        allowed = {str(c.get(k)) for c in ctx["candidates"] for k in ("match_percent", "success_rate_percent")}
+        allowed = {str(c.get(k)) for c in ctx["candidates"] or [] for k in ("match_percent", "success_rate_percent")}
+        allowed |= ctx["grounded_percents"]
         quoted = set(re.findall(r"(\d{1,3})\s?%", reply))
         if quoted - allowed:
             self._guardrail(ctx, "ungrounded_number", ", ".join(sorted(quoted - allowed)))
-            reply += "\n\n(Please rely on the figures shown on the cards.)"
+            source = "the cards" if ctx["candidates"] else "your dashboard"
+            reply += f"\n\n(Please rely on the figures shown on {source}.)"
         return reply
 
     def _guardrail(self, ctx: dict, name: str, text: str = "") -> None:

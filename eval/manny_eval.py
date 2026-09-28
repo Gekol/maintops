@@ -92,6 +92,12 @@ def build_dataset(client_id: int, handyman_id: int) -> list[dict]:
         {"inputs": {"messages": _user("Which jobs do I have at the moment?"), "role": "handyman",
                     "user_id": handyman_id},
          "expectations": {"no_write": True}},
+        {"inputs": {"messages": _user("Show me the cases where my feedback is the worst."), "role": "handyman",
+                    "user_id": handyman_id},
+         "expectations": {"no_write": True, "expect_review_list": True}},
+        {"inputs": {"messages": _user("What's my weakest side from the customers' perspective?"),
+                    "role": "handyman", "user_id": handyman_id},
+         "expectations": {"no_write": True}},
     ]
     return rows
 
@@ -106,7 +112,8 @@ def predict(messages: list[dict], role: str, user_id: int | None) -> dict:
                     for p in item.get("content", []) if p.get("type") == "output_text")
     custom = body.get("custom_outputs") or {}
     return {"response": text, "actions": custom.get("actions") or [],
-            "n_candidates": len(custom.get("candidates") or [])}
+            "n_candidates": len(custom.get("candidates") or []),
+            "review_ratings": [i.get("rating") for i in custom.get("incidents") or []]}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -128,6 +135,15 @@ def three_candidates_returned(outputs, expectations):
     if not expectations.get("expect_candidates"):
         return None
     return outputs["n_candidates"] == 3
+
+
+@scorer
+def worst_reviews_listed(outputs, expectations):
+    """"Worst feedback" must return a non-empty list sorted from the lowest rating up."""
+    if not expectations.get("expect_review_list"):
+        return None
+    ratings = outputs.get("review_ratings") or []
+    return bool(ratings) and ratings == sorted(ratings)
 
 
 @scorer
@@ -184,7 +200,7 @@ def main() -> None:
         result = mlflow.genai.evaluate(
             data=build_dataset(client_id, handyman_id),
             predict_fn=predict,
-            scorers=[classification_correct, three_candidates_returned, no_unrequested_write,
+            scorers=[classification_correct, three_candidates_returned, worst_reviews_listed, no_unrequested_write,
                      emergency_advice, *JUDGES],
         )
         print("run:", result.run_id)

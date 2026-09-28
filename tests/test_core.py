@@ -139,3 +139,53 @@ def test_feedback_rating_validation(rating):
 def test_job_status_validation():
     with pytest.raises(incidents.ServiceError, match="in_progress' or 'completed"):
         incidents.update_job_status(1, 1, "cancelled")
+
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"order": "cheapest"}, "Unknown order"),
+    ({"incident_type": "astrology"}, "Unknown incident type"),
+    ({"min_rating": 0}, "min_rating must be"),
+    ({"max_rating": "5"}, "max_rating must be"),
+    ({"min_rating": 4, "max_rating": 2}, "cannot be higher"),
+    ({"limit": "ten"}, "limit must be"),
+])
+def test_review_search_validation(kwargs, message):
+    with pytest.raises(incidents.ServiceError, match=message):
+        incidents.search_handyman_reviews(1, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────
+# Handyman insights: strongest / weakest job type
+# ─────────────────────────────────────────────────────────────
+
+
+def _type_row(incident_type, success, rated, rating=4.0):
+    return {"incident_type": incident_type, "success_rate_percent": success, "rated_jobs": rated, "avg_rating": rating}
+
+
+def test_compare_job_types_picks_weakest_and_strongest():
+    rows = [_type_row("all", 70, 40), _type_row("plumbing", 85, 20), _type_row("roofing", 50, 6),
+            _type_row("painting", 20, 2)]                 # painting: too few rated jobs to count
+    out = incidents.compare_job_types(rows)
+    assert out["weakest"]["incident_type"] == "roofing"
+    assert out["strongest"]["incident_type"] == "plumbing"
+    assert out["compared_types"] == 2
+    assert out["gap_points"] == 35 and out["clear_difference"] is True
+
+
+def test_compare_job_types_small_gap_is_about_even():
+    out = incidents.compare_job_types([_type_row("plumbing", 93, 600), _type_row("heating_hvac", 95, 1000)])
+    assert out["clear_difference"] is False and "about the same" in out["note"]
+
+
+def test_compare_job_types_tie_prefers_more_evidence():
+    out = incidents.compare_job_types([_type_row("plumbing", 60, 3), _type_row("roofing", 60, 9),
+                                       _type_row("painting", 90, 5)])
+    assert out["weakest"]["incident_type"] == "roofing"
+
+
+def test_compare_job_types_needs_two_eligible_types():
+    out = incidents.compare_job_types([_type_row("all", 70, 40), _type_row("plumbing", 85, 20),
+                                       _type_row("roofing", None, 5)])
+    assert out["weakest"] is None and out["strongest"] is None
+    assert "not enough data" in out["note"]

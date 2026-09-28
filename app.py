@@ -237,6 +237,7 @@ def manny_chat():
         "candidates": custom.get("candidates"),
         "incident_id": custom.get("incident_id"),
         "actions": custom.get("actions") or [],
+        "incidents": custom.get("incidents"),
     })
 
 

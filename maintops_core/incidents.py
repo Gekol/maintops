@@ -92,6 +92,120 @@ def get_handyman_reviews(handyman_id: int, limit: int = 10) -> dict:
     return {"summary": summary, "recent_reviews": reviews}
 
 
+# Whitelisted sort orders for search_handyman_reviews (never built from input)
+REVIEW_ORDERS = {
+    "worst": "rating ASC, (feedback IS NULL), completed_at DESC",    # written reviews first on ties
+    "best": "rating DESC, (feedback IS NULL), completed_at DESC",
+    "recent": "completed_at DESC",
+}
+MAX_REVIEW_RESULTS = 20
+MIN_RATED_FOR_COMPARISON = 3     # job types with fewer rated jobs are too thin to call a strength or weakness
+CLEAR_GAP_POINTS = 5             # smaller success-rate gaps between job types count as "about even"
+
+
+def _optional_rating(value, name: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 5:
+        raise ServiceError(f"{name} must be a whole number from 1 to 5.")
+    return value
+
+
+def search_handyman_reviews(handyman_id: int, order: str = "worst", incident_type: str | None = None,
+                            min_rating: int | None = None, max_rating: int | None = None,
+                            limit: int = 10) -> list[dict]:
+    """The handyman's own rated jobs, filtered and sorted in SQL (worst / best / recent first)."""
+    if order not in REVIEW_ORDERS:
+        raise ServiceError(f"Unknown order '{order}'. Use worst, best or recent.")
+    if incident_type is not None and incident_type not in SPECIALISATIONS:
+        raise ServiceError(f"Unknown incident type '{incident_type}'.")
+    min_rating = _optional_rating(min_rating, "min_rating")
+    max_rating = _optional_rating(max_rating, "max_rating")
+    if min_rating and max_rating and min_rating > max_rating:
+        raise ServiceError("min_rating cannot be higher than max_rating.")
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        raise ServiceError("limit must be a whole number.")
+    limit = max(1, min(limit, MAX_REVIEW_RESULTS))
+
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT id, incident_type, description, rating, feedback, completed_at
+            FROM maintops.incidents
+            WHERE handyman_user_id = %s AND rating IS NOT NULL
+              AND (%s::varchar IS NULL OR incident_type = %s)
+              AND (%s::int IS NULL OR rating >= %s)
+              AND (%s::int IS NULL OR rating <= %s)
+            ORDER BY {REVIEW_ORDERS[order]}
+            LIMIT %s""",
+            (handyman_id, incident_type, incident_type, min_rating, min_rating, max_rating, max_rating, limit))
+        return [{"id": r[0], "incident_type": r[1], "description": (r[2] or "")[:200], "rating": r[3],
+                 "feedback": r[4], "completed_at": r[5].date().isoformat() if r[5] else None}
+                for r in cur.fetchall()]
+
+
+def _percent(rate) -> int | None:
+    return round(float(rate) * 100) if rate is not None else None
+
+
+def compare_job_types(by_type: list[dict]) -> dict:
+    """Strongest and weakest job type by success rate, among types with enough rated jobs.
+
+    Deterministic, so the LLM only explains the result. Ties go to the type with more rated jobs.
+    """
+    eligible = [t for t in by_type
+                if t["incident_type"] != "all" and t["rated_jobs"] >= MIN_RATED_FOR_COMPARISON
+                and t["success_rate_percent"] is not None]
+    if len(eligible) < 2:
+        return {"strongest": None, "weakest": None, "compared_types": len(eligible),
+                "note": f"Fewer than two job types have {MIN_RATED_FOR_COMPARISON}+ rated jobs, "
+                        "so there is not enough data to compare job types."}
+    ranked = sorted(eligible, key=lambda t: (t["success_rate_percent"], -t["rated_jobs"]))
+    pick = lambda t: {k: t[k] for k in ("incident_type", "success_rate_percent", "avg_rating", "rated_jobs")}  # noqa: E731
+    gap = ranked[-1]["success_rate_percent"] - ranked[0]["success_rate_percent"]
+    note = f"Only job types with {MIN_RATED_FOR_COMPARISON}+ rated jobs are compared."
+    if gap < CLEAR_GAP_POINTS:
+        note += f" The gap is under {CLEAR_GAP_POINTS} points, so the job types perform about the same."
+    return {"strongest": pick(ranked[-1]), "weakest": pick(ranked[0]), "compared_types": len(eligible),
+            "gap_points": gap, "clear_difference": gap >= CLEAR_GAP_POINTS, "note": note}
+
+
+def get_handyman_performance(handyman_id: int) -> dict:
+    """Scorecard from the pipeline (overall + per job type), review sentiment and summary,
+    the job-type comparison, and recent low- and top-rated review texts for spotting themes."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT incident_type, jobs_completed, jobs_cancelled, rated_jobs, success_rate, avg_rating,
+                              avg_resolution_hours, avg_travel_minutes
+                       FROM maintops.handyman_performance WHERE handyman_user_id = %s
+                       ORDER BY incident_type""", (handyman_id,))
+        rows = [{"incident_type": r[0], "jobs_completed": r[1], "jobs_cancelled": r[2], "rated_jobs": r[3],
+                 "success_rate_percent": _percent(r[4]),
+                 "avg_rating": float(r[5]) if r[5] is not None else None,
+                 "avg_resolution_hours": float(r[6]) if r[6] is not None else None,
+                 "avg_travel_minutes": float(r[7]) if r[7] is not None else None} for r in cur.fetchall()]
+        cur.execute("""SELECT review_count, positive_share, negative_share, review_summary, summary_updated_at
+                       FROM maintops.handyman_feedback WHERE handyman_user_id = %s""", (handyman_id,))
+        f = cur.fetchone()
+        cur.execute("""SELECT id, incident_type, rating, feedback FROM maintops.incidents
+                       WHERE handyman_user_id = %s AND rating <= 2 AND feedback IS NOT NULL
+                       ORDER BY rating, completed_at DESC LIMIT 5""", (handyman_id,))
+        low = [{"id": r[0], "incident_type": r[1], "rating": r[2], "feedback": r[3]} for r in cur.fetchall()]
+        cur.execute("""SELECT id, incident_type, rating, feedback FROM maintops.incidents
+                       WHERE handyman_user_id = %s AND rating = 5 AND feedback IS NOT NULL
+                       ORDER BY completed_at DESC LIMIT 5""", (handyman_id,))
+        top = [{"id": r[0], "incident_type": r[1], "rating": r[2], "feedback": r[3]} for r in cur.fetchall()]
+
+    feedback = None
+    if f:
+        feedback = {"review_count": f[0], "positive_percent": _percent(f[1]), "negative_percent": _percent(f[2]),
+                    "review_summary": f[3], "summary_updated_at": f[4]}
+    return {"overall": next((r for r in rows if r["incident_type"] == "all"), None),
+            "by_type": [r for r in rows if r["incident_type"] != "all"],
+            "comparison": compare_job_types(rows),
+            "feedback": feedback,
+            "low_rated_reviews": low,
+            "top_rated_reviews": top}
+
+
 def user_names(user_ids) -> dict:
     """{user_id: "First Last"} for the given ids."""
     ids = [int(i) for i in user_ids or []]
