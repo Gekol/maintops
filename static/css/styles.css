@@ -240,64 +240,6 @@ a:hover { color: var(--secondary); }
 .step-content h4 { color: var(--text-primary); margin: 0 0 0.25rem; }
 .step-content p  { color: var(--text-secondary); font-size: 0.9rem; margin: 0; line-height: 1.5; }
 
-/* ── Chat widget ─────────────────────────────────────────────────── */
-.chat-container {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 1.5rem;
-  max-width: 700px;
-  margin: 0 auto;
-}
-.chat-messages {
-  max-height: 300px;
-  overflow-y: auto;
-  margin-bottom: 1rem;
-}
-.chat-msg {
-  padding: 0.7rem 1rem;
-  border-radius: 10px;
-  margin-bottom: 0.6rem;
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-.chat-msg.user {
-  background: rgba(42, 122, 94, 0.18);
-  margin-left: 15%;
-  text-align: right;
-}
-.chat-msg.assistant {
-  background: rgba(26, 30, 46, 0.9);
-  border: 1px solid var(--border);
-  margin-right: 15%;
-}
-.chat-form { display: flex; gap: 0.5rem; }
-.chat-form input {
-  flex: 1;
-  padding: 0.6rem 1rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: #111827;
-  color: var(--text-primary);
-  font-size: 0.92rem;
-  outline: none;
-}
-.chat-form input:focus { border-color: var(--primary-light); }
-.chat-form button {
-  padding: 0.6rem 1.4rem;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--primary), var(--primary-light));
-  color: #fff;
-  border: none;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.25s ease;
-}
-.chat-form button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(42, 122, 94, 0.45);
-}
-
 /* ── Auth form container ─────────────────────────────────────────── */
 .auth-container {
   max-width: 500px;
@@ -468,13 +410,8 @@ a:hover { color: var(--secondary); }
 .link-row a { font-size: 0.9rem; }
 
 /* ── Utility ─────────────────────────────────────────────────────── */
-.text-center { text-align: center; }
 .text-muted  { color: var(--text-secondary); font-size: 0.85rem; }
-.mt-1 { margin-top: 0.5rem; }
 .mt-2 { margin-top: 1rem; }
-.mt-3 { margin-top: 1.5rem; }
-.mb-2 { margin-bottom: 1rem; }
-.container { max-width: 1100px; margin: 0 auto; padding: 0 2rem; }
 
 /* ── Multiselect (custom styled checkboxes) ──────────────────────── */
 .multiselect-grid {
@@ -761,17 +698,6 @@ a:hover { color: var(--secondary); }
   font-size: 0.95rem;
 }
 
-/* Navbar greeting */
-.nav-greeting {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.45rem 1rem;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-}
-
 /* ── Manny floating chat ─────────────────────────────────────────── */
 .manny-fab {
   position: fixed;
@@ -888,6 +814,39 @@ a:hover { color: var(--secondary); }
 }
 
 /* Input area */
+.manny-msg.thinking { opacity: 0.7; font-style: italic; }
+.manny-msg.error {
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+}
+
+/* Candidate cards returned by find_handymen (every figure comes from the database, not the LLM) */
+.manny-cards { display: flex; flex-direction: column; gap: 0.5rem; align-self: stretch; }
+.manny-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.8rem;
+}
+.manny-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.manny-card-name { font-weight: 600; color: var(--text-primary); }
+.manny-card-match { font-weight: 700; color: var(--primary-light); white-space: nowrap; }
+.manny-card-stats { display: flex; flex-wrap: wrap; gap: 0.2rem 0.7rem; margin: 0.35rem 0; color: var(--text-secondary); }
+.manny-card-stat b { color: var(--text-primary); font-weight: 600; }
+.manny-card-summary { color: var(--text-secondary); font-style: italic; margin-bottom: 0.45rem; }
+.manny-card-choose {
+  width: 100%;
+  padding: 0.35rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--primary), var(--primary-light));
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.manny-card-choose:disabled { opacity: 0.5; cursor: default; }
+
 .manny-input-row {
   display: flex;
   gap: 0.5rem;
@@ -989,3 +948,21 @@ a:hover { color: var(--secondary); }
   .dash-stats { grid-template-columns: repeat(2, 1fr); }
   .dash-incident-header { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
 }
+
+/* ── Dashboard incident actions ──────────────────────────────────── */
+.btn-small { padding: 0.35rem 0.9rem; font-size: 0.85rem; }
+.dash-incident-actions { display: flex; gap: 0.5rem; margin-top: 0.7rem; flex-wrap: wrap; }
+.dash-incident-feedback { color: var(--text-secondary); font-style: italic; font-size: 0.88rem; margin-top: 0.5rem; }
+.dash-feedback-form { margin-top: 0.8rem; }
+.dash-feedback-form label { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.35rem; }
+.dash-feedback-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.dash-feedback-row select,
+.dash-feedback-row input {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #111827;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+}
+.dash-feedback-row input { flex: 1; min-width: 180px; }

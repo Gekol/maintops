@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
@@ -57,11 +58,17 @@
     </div>
     <div class="manny-messages" id="mannyMessages">
       <div class="manny-msg assistant">
-        Hi! I'm Manny, your MaintOps assistant. How can I help you today?
+        {% if current_user.is_authenticated and not current_user.is_handyman %}
+          Hi {{ current_user.first_name }}! Describe what's broken — e.g. "my kitchen tap is leaking" — and I'll find the three best handymen for it.
+        {% elif current_user.is_authenticated %}
+          Hi {{ current_user.first_name }}! Ask me about your jobs, your reviews, or update a job's status.
+        {% else %}
+          Hi! I'm Manny, your MaintOps assistant. Ask me anything about how MaintOps works.
+        {% endif %}
       </div>
     </div>
     <div class="manny-input-row">
-      <input type="text" id="mannyInput" placeholder="Ask Manny anything…" autocomplete="off">
+      <input type="text" id="mannyInput" placeholder="Ask Manny anything…" autocomplete="off" maxlength="2000">
       <button id="mannySend">Send</button>
     </div>
   </div>
@@ -73,41 +80,140 @@
   {% block scripts %}{% endblock %}
 
   <script>
-    // Manny chat toggle
+    // Manny chat: talks to /api/manny (the server adds the user's role and id), shows candidate cards
     (function() {
       const fab   = document.getElementById('mannyFab');
       const panel = document.getElementById('mannyPanel');
       const input = document.getElementById('mannyInput');
       const btn   = document.getElementById('mannySend');
       const msgs  = document.getElementById('mannyMessages');
+      const IS_CLIENT = {{ 'true' if current_user.is_authenticated and not current_user.is_handyman else 'false' }};
+      const STORE_KEY = 'manny_history_{{ current_user.id if current_user.is_authenticated else "guest" }}';
+      const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
+      let history = [];
+      let busy = false;
 
       fab.addEventListener('click', function() {
         const open = panel.classList.toggle('open');
         fab.classList.toggle('open', open);
         if (open) input.focus();
       });
+      // Used by "Report New Incident" on the dashboard
+      window.openManny = function() {
+        panel.classList.add('open'); fab.classList.add('open'); input.focus();
+      };
 
-      function sendMessage() {
-        const text = input.value.trim();
-        if (!text) return;
-
-        // Append user bubble
-        const userMsg = document.createElement('div');
-        userMsg.className = 'manny-msg user';
-        userMsg.textContent = text;
-        msgs.appendChild(userMsg);
-        input.value = '';
-        msgs.scrollTop = msgs.scrollHeight;
-
-        // Placeholder reply (will be replaced with real agent call)
-        setTimeout(function() {
-          const reply = document.createElement('div');
-          reply.className = 'manny-msg assistant';
-          reply.textContent = "I'm not connected to my brain yet, but I will be soon! Stay tuned.";
-          msgs.appendChild(reply);
-          msgs.scrollTop = msgs.scrollHeight;
-        }, 600);
+      function save() {
+        try { sessionStorage.setItem(STORE_KEY, JSON.stringify(history.slice(-20))); } catch (e) {}
       }
+
+      function escapeHtml(s) {
+        return s.replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+      }
+
+      // Minimal formatting: escape everything, then **bold** and line breaks
+      function format(text) {
+        return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+      }
+
+      function bubble(role, text, extraClass) {
+        const el = document.createElement('div');
+        el.className = 'manny-msg ' + role + (extraClass ? ' ' + extraClass : '');
+        el.innerHTML = format(text);
+        msgs.appendChild(el);
+        msgs.scrollTop = msgs.scrollHeight;
+        return el;
+      }
+
+      function stat(label, value) {
+        return value === null || value === undefined ? '' :
+          '<span class="manny-card-stat"><b>' + escapeHtml(String(value)) + '</b> ' + label + '</span>';
+      }
+
+      function renderCards(incidentId, candidates) {
+        const wrap = document.createElement('div');
+        wrap.className = 'manny-cards';
+        candidates.forEach(function(c, i) {
+          const card = document.createElement('div');
+          card.className = 'manny-card';
+          const travel = c.travel_minutes + ' min' + (c.travel_estimated ? ' (est.)' : '') + ' · ' + c.distance_km + ' km';
+          card.innerHTML =
+            '<div class="manny-card-head"><span class="manny-card-name">' + (i + 1) + '. ' + escapeHtml(c.name) +
+            '</span><span class="manny-card-match">' + c.match_percent + '% match</span></div>' +
+            '<div class="manny-card-stats">' +
+              stat('success on similar jobs', c.success_rate_percent !== null ? c.success_rate_percent + '%' : null) +
+              stat('jobs of this type', c.jobs_of_this_type) +
+              stat('★ (' + c.rating_count + ' reviews)', c.avg_rating) +
+              stat('away', travel) +
+              stat('avg job price', c.avg_price_eur !== null ? '€' + Math.round(c.avg_price_eur) : null) +
+              stat('active jobs', c.active_jobs) +
+            '</div>' +
+            (c.review_summary ? '<div class="manny-card-summary">“' + escapeHtml(c.review_summary) + '”</div>' : '');
+          if (IS_CLIENT) {
+            const choose = document.createElement('button');
+            choose.className = 'manny-card-choose';
+            choose.textContent = 'Choose';
+            choose.addEventListener('click', function() { assign(incidentId, c, wrap); });
+            card.appendChild(choose);
+          }
+          wrap.appendChild(card);
+        });
+        msgs.appendChild(wrap);
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+
+      async function assign(incidentId, c, wrap) {
+        if (!confirm('Assign ' + c.name + ' to incident #' + incidentId + '?')) return;
+        wrap.querySelectorAll('button').forEach(b => b.disabled = true);
+        try {
+          const resp = await fetch('/api/incidents/' + incidentId + '/assign', {
+            method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+            body: JSON.stringify({handyman_id: c.handyman_id})
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.error || 'Could not assign the handyman.');
+          const text = '✅ ' + data.handyman_name + ' is now assigned to incident #' + incidentId +
+                       '. The job appears in their job list, and you can follow it on your dashboard.';
+          bubble('assistant', text);
+          history.push({role: 'assistant', content: text});
+          save();
+        } catch (e) {
+          bubble('assistant', e.message, 'error');
+          wrap.querySelectorAll('button').forEach(b => b.disabled = false);
+        }
+      }
+
+      async function sendMessage() {
+        const text = input.value.trim();
+        if (!text || busy) return;
+        busy = true; btn.disabled = true; input.value = '';
+        bubble('user', text);
+        history.push({role: 'user', content: text});
+        const thinking = bubble('assistant', 'Manny is thinking…', 'thinking');
+        try {
+          const resp = await fetch('/api/manny', {
+            method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+            body: JSON.stringify({messages: history.slice(-20)})
+          });
+          const data = await resp.json();
+          thinking.remove();
+          if (!resp.ok) throw new Error(data.error || 'Manny is not available right now.');
+          bubble('assistant', data.reply);
+          history.push({role: 'assistant', content: data.reply});
+          if (data.candidates && data.candidates.length && data.incident_id) renderCards(data.incident_id, data.candidates);
+          save();
+        } catch (e) {
+          thinking.remove();
+          history.pop();                       // let the user retry the same message
+          bubble('assistant', e.message, 'error');
+        } finally {
+          busy = false; btn.disabled = false; input.focus();
+        }
+      }
+
+      // Restore this tab's conversation
+      try { history = JSON.parse(sessionStorage.getItem(STORE_KEY) || '[]'); } catch (e) { history = []; }
+      history.forEach(m => bubble(m.role, m.content));
 
       btn.addEventListener('click', sendMessage);
       input.addEventListener('keydown', function(e) {

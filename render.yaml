@@ -3,7 +3,8 @@ services:
     name: maintops
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: flask run --host 0.0.0.0 --port $PORT
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 150
+    healthCheckPath: /healthz
     envVars:
       - key: FLASK_APP
         value: app.py
@@ -17,3 +18,11 @@ services:
         sync: false  # set manually in Render dashboard (sensitive)
       - key: LLM_ENDPOINT
         value: databricks-meta-llama-3-3-70b-instruct
+      - key: MANNY_ENDPOINT
+        value: maintops-manny     # Model Serving endpoint of the Manny agent
+      - key: DATABRICKS_WAREHOUSE_ID
+        value: b15d3d6f837ba428   # SQL warehouse that runs ai_parse_document for CV uploads
+      - key: LAKEBASE_PG_URL
+        sync: false  # set manually in Render dashboard (sensitive)
+      - key: GEOAPIFY_API_KEY
+        sync: false  # set manually in Render dashboard (sensitive)

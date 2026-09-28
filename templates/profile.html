@@ -10,6 +10,7 @@
   </div>
 
   <form method="POST" action="{{ url_for('profile') }}" class="profile-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
     <!-- Personal info -->
     <div class="profile-section">

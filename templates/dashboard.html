@@ -64,7 +64,27 @@
       <div class="dash-incident-meta">
         <span>📅 {{ inc.created_at.strftime('%d %b %Y') }}</span>
         {% if inc.urgency %}<span class="urgency-{{ inc.urgency }}">⚡ {{ inc.urgency }}</span>{% endif %}
+        <span>#{{ inc.id }}</span>
+        {% if inc.rating %}<span>{{ '★' * inc.rating }}</span>{% endif %}
       </div>
+      {% if inc.feedback %}<p class="dash-incident-feedback">“{{ inc.feedback }}”</p>{% endif %}
+      {% if inc.status in ('assigned', 'in_progress') %}
+      <div class="dash-incident-actions">
+        {% if inc.status == 'assigned' %}
+        <form method="POST" action="{{ url_for('job_status', incident_id=inc.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="status" value="in_progress">
+          <button class="btn btn-small">▶ Start job</button>
+        </form>
+        {% endif %}
+        <form method="POST" action="{{ url_for('job_status', incident_id=inc.id) }}"
+              onsubmit="return confirm('Mark job #{{ inc.id }} as completed?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="status" value="completed">
+          <button class="btn btn-primary btn-small">✔ Mark completed</button>
+        </form>
+      </div>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
@@ -80,7 +100,7 @@
 
   <!-- Quick actions -->
   <div class="dash-actions">
-    <a href="#" class="btn btn-primary">🚨 Report New Incident</a>
+    <button type="button" class="btn btn-primary" onclick="openManny()">🚨 Report New Incident</button>
     <a href="{{ url_for('profile') }}" class="btn">👤 Edit Profile</a>
   </div>
 
@@ -99,7 +119,32 @@
         <span>📅 {{ inc.created_at.strftime('%d %b %Y') }}</span>
         {% if inc.urgency %}<span class="urgency-{{ inc.urgency }}">⚡ {{ inc.urgency }}</span>{% endif %}
         {% if inc.handyman_name %}<span>🔧 {{ inc.handyman_name }}</span>{% endif %}
+        <span>#{{ inc.id }}</span>
+        {% if inc.rating %}<span>{{ '★' * inc.rating }}</span>{% endif %}
       </div>
+      {% if inc.status == 'completed' and not inc.rating %}
+      <form class="dash-feedback-form" method="POST" action="{{ url_for('incident_feedback', incident_id=inc.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>How did {{ inc.handyman_name or 'the handyman' }} do?</label>
+        <div class="dash-feedback-row">
+          <select name="rating" required>
+            <option value="" disabled selected>Rating</option>
+            {% for n in range(5, 0, -1) %}<option value="{{ n }}">{{ '★' * n }}</option>{% endfor %}
+          </select>
+          <input type="text" name="feedback" maxlength="2000" placeholder="What went well, what could be better?">
+          <button class="btn btn-primary btn-small">Send</button>
+        </div>
+      </form>
+      {% elif inc.feedback %}
+      <p class="dash-incident-feedback">“{{ inc.feedback }}”</p>
+      {% endif %}
+      {% if inc.status in ('open', 'recommended', 'assigned') %}
+      <form method="POST" action="{{ url_for('incident_cancel', incident_id=inc.id) }}"
+            onsubmit="return confirm('Cancel incident #{{ inc.id }}?');" class="dash-incident-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-small">Cancel incident</button>
+      </form>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
