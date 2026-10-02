@@ -17,9 +17,9 @@ services:
       - key: DATABRICKS_TOKEN
         sync: false  # set manually in Render dashboard (sensitive)
       - key: MANNY_ENDPOINT
-        value: maintops-manny     # Model Serving endpoint of the Manny agent
+        sync: false  # set manually in Render dashboard (Model Serving endpoint of the Manny agent)
       - key: DATABRICKS_WAREHOUSE_ID
-        value: b15d3d6f837ba428   # SQL warehouse that runs ai_parse_document for CV uploads
+        sync: false  # set manually in Render dashboard (SQL warehouse that runs ai_parse_document for CV uploads)
       - key: LAKEBASE_PG_URL
         sync: false  # set manually in Render dashboard (sensitive)
       - key: GEOAPIFY_API_KEY

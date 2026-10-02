@@ -84,7 +84,7 @@ On Databricks the agent endpoint and jobs read `LAKEBASE_PG_URL` and `GEOAPIFY_A
 
 ## Deployment
 
-- **Render (graded):** live at **https://maintops-h3bv.onrender.com** (free instance: the first request after a quiet period can take about 50 s). `render.yaml` runs gunicorn with a `/healthz` health check; every push to `main` deploys automatically. Secrets (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `LAKEBASE_PG_URL`, `GEOAPIFY_API_KEY`) are set in the Render dashboard (`sync: false`).
+- **Render (graded):** live at **https://maintops-h3bv.onrender.com** (free instance: the first request after a quiet period can take about 50 s). `render.yaml` runs gunicorn with a `/healthz` health check; every push to `main` deploys automatically. `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `LAKEBASE_PG_URL`, `GEOAPIFY_API_KEY`, `MANNY_ENDPOINT` (`maintops-manny`) and `DATABRICKS_WAREHOUSE_ID` are set in the Render dashboard (`sync: false`); the service was created in the dashboard, so `render.yaml` documents them rather than setting them.
 - **Databricks Apps:** `app.yaml` runs the same gunicorn command on port 8000 with secrets from the app's resources.
 - **Databricks side:** `databricks bundle deploy -p <profile>` deploys every job and the analytics pipeline (`databricks.yml`); `databricks bundle run maintops_manny_deploy` (re)deploys Manny; `python sqls/migrate.py` applies schema migrations.
 
