@@ -114,7 +114,8 @@ databricks tokens create --lifetime-seconds 28800 --comment "MaintOps assessment
 ```
 
 Without a personal access token, a 1-hour OAuth token works the same way:
-`databricks auth token -p <your-profile>` (field `access_token`). Demo accounts: see "Synthetic data" below
+`databricks auth token --force-refresh -p <your-profile>` (field `access_token`). `--force-refresh` always issues a new
+token with the full hour left; without it the CLI may return a cached one that is about to expire. Demo accounts: see "Synthetic data" below
 (all share the demo password `MaintOps!2026`), e.g. client `thomaskoch37@example.com`, handyman
 `ute.wisniewski15@example.net`.
 
