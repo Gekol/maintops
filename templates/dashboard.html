@@ -45,8 +45,8 @@
       <div class="dash-stat-label">Specialisations</div>
     </div>
     <div class="dash-stat-card">
-      <div class="dash-stat-number">{{ hm.avg_price or '—' }}</div>
-      <div class="dash-stat-label">Avg Price</div>
+      <div class="dash-stat-number">{{ ('€%d/h' % (hm.avg_price | round)) if hm.avg_price else '—' }}</div>
+      <div class="dash-stat-label">Avg Hourly Rate</div>
     </div>
   </div>
 
@@ -85,6 +85,48 @@
         {% if inc.rating %}<span>{{ '★' * inc.rating }}</span>{% endif %}
       </div>
       {% if inc.feedback %}<p class="dash-incident-feedback">“{{ inc.feedback }}”</p>{% endif %}
+      {% if inc.status == 'assigned' %}
+      {% set trip = trips.get(inc.id) %}
+      {% if trip %}
+      <p class="trip-eta">
+        {{ '🚗' if trip.travel_mode == 'drive' else '🚆' }} On your way since {{ trip.departed_at | local_time }}
+        from {{ {'home': 'home', 'last_job': 'your last job', 'custom': trip.origin_address}[trip.origin_kind] }} ·
+        {{ '~' if trip.travel_mode == 'transit' }}{{ [trip.travel_minutes | round | int, 1] | max }} min
+        {{ 'by car' if trip.travel_mode == 'drive' else 'by public transport' }} ·
+        arriving around {{ trip.expected_arrival | local_time }}{% if trip.estimated %} (rough estimate){% endif %}
+      </p>
+      {% endif %}
+      <details class="trip-form">
+        <summary>{{ '📍 Update my trip' if trip else "🧭 I'm on my way" }}</summary>
+        <form method="POST" action="{{ url_for('job_trip', incident_id=inc.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <fieldset>
+            <legend>Setting off from</legend>
+            {% if trip_options.home %}
+            <label><input type="radio" name="origin" value="home" checked> Home · {{ trip_options.home.address }}</label>
+            {% endif %}
+            {% if trip_options.last_job %}
+            <label><input type="radio" name="origin" value="last_job" {% if not trip_options.home %}checked{% endif %}>
+              My last job (#{{ trip_options.last_job.incident_id }}) · {{ trip_options.last_job.address }}</label>
+            {% endif %}
+            <label><input type="radio" name="origin" value="custom"
+                          {% if not trip_options.home and not trip_options.last_job %}checked{% endif %}> Another address</label>
+            <input type="text" name="address" maxlength="256" placeholder="Street and number, postcode, city"
+                   aria-label="Address you are setting off from">
+          </fieldset>
+          {% if trip_options.has_car %}
+          <fieldset>
+            <legend>Travelling</legend>
+            <label><input type="radio" name="mode" value="drive" checked> 🚗 By car</label>
+            <label><input type="radio" name="mode" value="transit"> 🚆 By public transport</label>
+          </fieldset>
+          {% else %}
+          <p class="trip-hint">🚆 By public transport: your profile has no car.</p>
+          {% endif %}
+          <button class="btn btn-primary btn-small">Set off</button>
+        </form>
+      </details>
+      {% endif %}
       {% if inc.status in ('assigned', 'in_progress') %}
       <div class="dash-incident-actions">
         {% if inc.status == 'assigned' %}
@@ -139,6 +181,16 @@
         <span>#{{ inc.id }}</span>
         {% if inc.rating %}<span>{{ '★' * inc.rating }}</span>{% endif %}
       </div>
+      {% set trip = trips.get(inc.id) %}
+      {% if inc.status == 'assigned' and trip %}
+      <p class="trip-eta">
+        {{ '🚗' if trip.travel_mode == 'drive' else '🚆' }} {{ inc.handyman_name or 'Your handyman' }} set off at
+        {{ trip.departed_at | local_time }} · {{ '~' if trip.travel_mode == 'transit' }}{{ [trip.travel_minutes | round | int, 1] | max }} min
+        {{ 'by car' if trip.travel_mode == 'drive' else 'by public transport' }} ·
+        expected around <strong>{{ trip.expected_arrival | local_time }}</strong>
+        <span class="trip-note">(estimate{% if trip.estimated %}, rough{% endif %})</span>
+      </p>
+      {% endif %}
       {% if inc.status == 'completed' and not inc.rating %}
       <form class="dash-feedback-form" method="POST" action="{{ url_for('incident_feedback', incident_id=inc.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

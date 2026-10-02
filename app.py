@@ -4,7 +4,9 @@ import json
 import os
 import time
 import uuid
+from datetime import timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 import requests as http_requests
 from argon2 import PasswordHasher
@@ -32,6 +34,7 @@ from flask_login import (
 from db import get_connection
 from maintops_core import geo
 from maintops_core import incidents as inc
+from maintops_core import trips
 from maintops_core.events import log_event
 
 app = Flask(__name__)
@@ -126,6 +129,7 @@ DBX_HOST = os.environ.get("DATABRICKS_HOST", "")       # e.g. https://dbc-xxx.cl
 DBX_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")     # PAT or OAuth token
 LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
 MANNY_ENDPOINT = os.environ.get("MANNY_ENDPOINT", "maintops-manny")   # Model Serving endpoint of the agent
+MANNY_URL = "/".join((DBX_HOST, "serving-endpoints", MANNY_ENDPOINT, "invocations"))
 MANNY_MAX_MESSAGES = 20
 MANNY_MAX_CHARS = 2000
 MANNY_RATE_LIMIT = (30, 600)      # at most 30 requests per 10 minutes per browser session
@@ -215,7 +219,7 @@ def manny_chat():
                "custom_inputs": {"role": role, "user_id": user_id, "task": "chat"}}
     try:
         resp = http_requests.post(
-            f"{DBX_HOST}/serving-endpoints/{MANNY_ENDPOINT}/invocations",
+            MANNY_URL,
             headers=_dbx_headers(), json=payload, timeout=120,
         )
     except http_requests.RequestException as exc:
@@ -273,7 +277,8 @@ def dashboard():
                 cur.execute(
                     "SELECT specialisations, completed_cases, rating_avg, "
                     "rating_count, avg_price "
-                    "FROM maintops.handyman_details WHERE user_id = %s",
+                    "FROM maintops.handyman_details "
+                    "WHERE user_id = %s",
                     (current_user.id,),
                 )
                 row = cur.fetchone()
@@ -300,7 +305,9 @@ def dashboard():
                     "status, created_at, rating, feedback "
                     "FROM maintops.incidents "
                     "WHERE handyman_user_id = %s "
-                    "ORDER BY (status IN ('assigned', 'in_progress')) DESC, created_at DESC LIMIT 20",
+                    "ORDER BY status IN "
+                    "('assigned', 'in_progress') DESC, "
+                    "created_at DESC LIMIT 20",
                     (current_user.id,),
                 )
                 for r in cur.fetchall():
@@ -330,9 +337,44 @@ def dashboard():
                         "handyman_name": r[6], "rating": r[7], "feedback": r[8],
                     })
 
+    # "I'm on my way" trips: the handyman's own view, or the client's estimate (no starting address)
+    trip_by_id = trips.trips_for([i["id"] for i in incidents if i["status"] == "assigned"])
+    trip_options = None
+    if current_user.is_handyman and any(i["status"] == "assigned" for i in incidents):
+        trip_options = trips.trip_origins(int(current_user.id))
     return render_template(
-        "dashboard.html", hm=hm, incidents=incidents,
+        "dashboard.html", hm=hm, incidents=incidents, trips=trip_by_id, trip_options=trip_options,
     )
+
+
+@app.route("/jobs/<int:incident_id>/trip", methods=["POST"])
+@handyman_required
+def job_trip(incident_id):
+    """Handyman sets off for a job: starting point and travel mode → route → estimate for the client."""
+    origin = request.form.get("origin", "")
+    try:
+        trip = trips.start_trip(int(current_user.id), incident_id, origin, request.form.get("mode") or None,
+                                request.form.get("address"))
+    except inc.ServiceError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("dashboard"))
+    log_event("ui_action", "start_trip", True, user_id=int(current_user.id), incident_id=incident_id,
+              details={"origin": origin, "mode": trip["travel_mode"], "minutes": trip["travel_minutes"]})
+    how = "by car" if trip["travel_mode"] == "drive" else "by public transport"
+    minutes = max(1, round(trip["travel_minutes"]))
+    flash(f"Safe trip! About {minutes} min {how}; the client now sees your estimated arrival.", "success")
+    return redirect(url_for("dashboard"))
+
+
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
+
+@app.template_filter("local_time")
+def local_time(value) -> str:
+    """A UTC timestamp from Lakebase as Berlin wall-clock time, e.g. 14:05."""
+    if value is None:
+        return ""
+    return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).strftime("%H:%M")
 
 
 @app.route("/incidents/<int:incident_id>/feedback", methods=["POST"])
@@ -424,7 +466,8 @@ def profile():
             with get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT password_hash FROM maintops.users WHERE id = %s",
+                        "SELECT password_hash "
+                        "FROM maintops.users WHERE id = %s",
                         (current_user.id,),
                     )
                     stored_hash = cur.fetchone()[0]
@@ -439,8 +482,8 @@ def profile():
         try:
             with get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT house, postal_code, city, country FROM maintops.users WHERE id = %s",
-                                (current_user.id,))
+                    cur.execute("SELECT house, postal_code, city, country "
+                                "FROM maintops.users WHERE id = %s", (current_user.id,))
                     address_changed = cur.fetchone() != (house, postal_code, city, country)
                     if new_hash:
                         cur.execute(
@@ -515,7 +558,8 @@ def profile():
             if current_user.is_handyman:
                 cur.execute(
                     "SELECT specialisations, skills, experience_summary, has_car "
-                    "FROM maintops.handyman_details WHERE user_id = %s",
+                    "FROM maintops.handyman_details "
+                    "WHERE user_id = %s",
                     (current_user.id,),
                 )
                 hrow = cur.fetchone()
@@ -790,8 +834,8 @@ def _parse_document(path: str) -> str | None:
     deadline = time.time() + 120
     while payload.get("status", {}).get("state") in ("PENDING", "RUNNING") and time.time() < deadline:
         time.sleep(3)
-        payload = http_requests.get(f"{DBX_HOST}/api/2.0/sql/statements/{payload['statement_id']}",
-                                    headers=_dbx_headers(), timeout=30).json()
+        status_url = "/".join((DBX_HOST, "api/2.0/sql/statements", payload["statement_id"]))
+        payload = http_requests.get(status_url, headers=_dbx_headers(), timeout=30).json()
     if payload.get("status", {}).get("state") != "SUCCEEDED":
         app.logger.error("ai_parse_document status: %s", payload.get("status"))
         return None
@@ -806,7 +850,7 @@ def _extract_profile_fields(cv_text: str) -> dict | None:
     """Ask Manny (task extract_cv) for structured handyman profile fields."""
     try:
         resp = http_requests.post(
-            f"{DBX_HOST}/serving-endpoints/{MANNY_ENDPOINT}/invocations", headers=_dbx_headers(), timeout=120,
+            MANNY_URL, headers=_dbx_headers(), timeout=120,
             json={"input": [{"role": "user", "content": "Extract the handyman profile from this CV."}],
                   "custom_inputs": {"role": "visitor", "task": "extract_cv", "cv_text": cv_text}},
         )

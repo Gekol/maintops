@@ -953,6 +953,16 @@ a:hover { color: var(--secondary); }
 .btn-small { padding: 0.35rem 0.9rem; font-size: 0.85rem; }
 .dash-incident-actions { display: flex; gap: 0.5rem; margin-top: 0.7rem; flex-wrap: wrap; }
 .dash-incident-feedback { color: var(--text-secondary); font-style: italic; font-size: 0.88rem; margin-top: 0.5rem; }
+.trip-eta { margin-top: 0.6rem; padding: 0.55rem 0.75rem; border-radius: var(--radius-sm); background: #12261F;
+            border: 1px solid var(--primary-light); font-size: 0.88rem; line-height: 1.45; }
+.trip-note, .trip-hint { color: var(--text-secondary); font-size: 0.82rem; }
+.trip-form { margin-top: 0.7rem; }
+.trip-form summary { cursor: pointer; color: var(--secondary); font-size: 0.9rem; }
+.trip-form fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 0.6rem 0; padding: 0.5rem 0.75rem; }
+.trip-form legend { color: var(--text-secondary); font-size: 0.8rem; padding: 0 0.3rem; }
+.trip-form label { display: block; font-size: 0.88rem; margin: 0.25rem 0; }
+.trip-form input[type="text"] { width: 100%; margin-top: 0.3rem; padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
+                                border: 1px solid var(--border); background: #111827; color: var(--text-primary); }
 .dash-feedback-form { margin-top: 0.8rem; }
 .dash-feedback-form label { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.35rem; }
 .dash-feedback-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
