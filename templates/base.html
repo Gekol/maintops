@@ -136,7 +136,10 @@
         candidates.forEach(function(c, i) {
           const card = document.createElement('div');
           card.className = 'manny-card';
-          const travel = c.travel_minutes + ' min' + (c.travel_estimated ? ' (est.)' : '') + ' · ' + c.distance_km + ' km';
+          const transit = c.travel_mode === 'transit';           // approximate by nature: shown as ~
+          const travel = (transit ? '~' : '') + Math.round(c.travel_minutes) + ' min' +
+                         (transit ? ' by public transport' : ' by car') + (c.travel_estimated ? ' (est.)' : '') +
+                         ' · ' + c.distance_km + ' km';
           card.innerHTML =
             '<div class="manny-card-head"><span class="manny-card-name">' + (i + 1) + '. ' + escapeHtml(c.name) +
             '</span><span class="manny-card-match">' + c.match_percent + '% match</span></div>' +
@@ -145,7 +148,7 @@
               stat('jobs of this type', c.jobs_of_this_type) +
               stat('★ (' + c.rating_count + ' reviews)', c.avg_rating) +
               stat('away', travel) +
-              stat('avg job price', c.avg_price_eur !== null ? '€' + Math.round(c.avg_price_eur) : null) +
+              stat('avg hourly rate', c.avg_hourly_rate_eur !== null ? '€' + Math.round(c.avg_hourly_rate_eur) + '/h' : null) +
               stat('active jobs', c.active_jobs) +
             '</div>' +
             (c.review_summary ? '<div class="manny-card-summary">“' + escapeHtml(c.review_summary) + '”</div>' : '');

@@ -1,4 +1,4 @@
-"""Geoapify integration: forward geocoding and the Route Matrix API.
+"""Geoapify integration: forward geocoding, the Route Matrix API (car) and the Routing API (public transport).
 
 - API key from GEOAPIFY_API_KEY (env var / Databricks secret), never in code.
 - Retries with exponential backoff on 429 and 5xx (honours Retry-After), 10–20 s timeouts.
@@ -6,11 +6,14 @@
 - Every call is logged to app_events (api_call) with latency and outcome.
 - If routing fails, callers get a straight-line estimate explicitly flagged estimated=True —
   never presented as real road data.
+- Handymen with a car are routed by car (one batched Route Matrix call); handymen without one by public
+  transport (Routing API, mode approximated_transit, one call each — the Route Matrix has no transit mode).
 """
 
 import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,9 +23,13 @@ from maintops_core.events import log_event
 
 GEOCODE_URL = "https://api.geoapify.com/v1/geocode/search"
 MATRIX_URL = "https://api.geoapify.com/v1/routematrix"
+ROUTING_URL = "https://api.geoapify.com/v1/routing"
+TRANSIT_MODE = "approximated_transit"           # Geoapify's public transport estimate (walk + transit + waits)
 MIN_CONFIDENCE = 0.5          # below this a geocoding result is treated as "not found"
 ROAD_FACTOR = 1.3             # straight-line → road distance, for the flagged fallback estimate
 FALLBACK_SPEED_KMH = 30       # urban driving speed for the fallback estimate
+FALLBACK_TRANSIT_KMH = 15     # door-to-door public transport speed (walks, waits, changes) for the same
+TRANSIT_PARALLEL = 4          # Routing API calls in flight at once (free plan: 5 requests/s)
 MAX_MATRIX_SOURCES = 50
 
 _session: requests.Session | None = None
@@ -143,3 +150,60 @@ def route_matrix(sources: list[tuple[float, float]], target: tuple[float, float]
                   incident_id=incident_id, error=error or (f"{missing} pairs missing" if missing else None),
                   latency_ms=int((time.time() - started) * 1000), details={"sources": len(sources)})
     return [r if r is not None else estimate(src) for r, src in zip(results, sources)]
+
+
+def _estimate(src: tuple[float, float], target: tuple[float, float], mode: str) -> dict:
+    km = haversine_km(src[0], src[1], target[0], target[1]) * ROAD_FACTOR
+    speed = FALLBACK_SPEED_KMH if mode == "drive" else FALLBACK_TRANSIT_KMH
+    return {"distance_km": round(km, 2), "travel_minutes": round(km / speed * 60, 1),
+            "estimated": True, "mode": mode}
+
+
+def _transit_route(src: tuple[float, float], target: tuple[float, float]) -> dict | None:
+    """One public transport route (Routing API); None if the API gives no valid answer."""
+    try:
+        resp = _get_session().get(ROUTING_URL, timeout=20, params={
+            "waypoints": f"{src[0]},{src[1]}|{target[0]},{target[1]}",          # lat,lon|lat,lon
+            "mode": TRANSIT_MODE, "apiKey": _api_key()})
+        if resp.status_code != 200:
+            return None
+        props = (((resp.json() or {}).get("features") or [{}])[0] or {}).get("properties") or {}
+        dist, secs = props.get("distance"), props.get("time")
+        if isinstance(dist, (int, float)) and isinstance(secs, (int, float)) and dist >= 0 and secs >= 0:
+            return {"distance_km": round(dist / 1000, 2), "travel_minutes": round(secs / 60, 1),
+                    "estimated": False, "mode": "transit"}
+    except (requests.RequestException, ValueError, GeoError, IndexError, AttributeError):
+        pass
+    return None
+
+
+def transit_times(sources: list[tuple[float, float]], target: tuple[float, float], *,
+                  user_id: int | None = None, incident_id: int | None = None) -> list[dict]:
+    """Public transport distance/time from each source to the target, aligned with sources (flagged estimate
+    where the API has no answer)."""
+    if not sources:
+        return []
+    started = time.time()
+    with ThreadPoolExecutor(max_workers=TRANSIT_PARALLEL) as pool:
+        results = list(pool.map(lambda src: _transit_route(src, target), sources))
+    missing = sum(r is None for r in results)
+    log_event("api_call", "geoapify_transit_routing", missing == 0, user_id=user_id, incident_id=incident_id,
+              error=f"{missing} of {len(sources)} routes missing" if missing else None,
+              latency_ms=int((time.time() - started) * 1000), details={"sources": len(sources)})
+    return [r if r is not None else _estimate(src, target, "transit") for r, src in zip(results, sources)]
+
+
+def travel_times(sources: list[tuple[float, float, bool]], target: tuple[float, float], *,
+                 user_id: int | None = None, incident_id: int | None = None) -> list[dict]:
+    """(lat, lon, has_car) per handyman → travel to the target by car or by public transport, aligned with
+    sources; every entry carries "mode" ("drive" | "transit")."""
+    by_car = [i for i, s in enumerate(sources) if s[2]]
+    by_transit = [i for i, s in enumerate(sources) if not s[2]]
+    out: list[dict | None] = [None] * len(sources)
+    driving = route_matrix([sources[i][:2] for i in by_car], target, user_id=user_id, incident_id=incident_id)
+    for i, r in zip(by_car, driving):
+        out[i] = {**r, "mode": "drive"}
+    transit = transit_times([sources[i][:2] for i in by_transit], target, user_id=user_id, incident_id=incident_id)
+    for i, r in zip(by_transit, transit):
+        out[i] = r
+    return out

@@ -117,9 +117,11 @@ SKILLS = {
                             "garden fence repair", "picture hanging", "caulking", "door hinge adjustment", "property inspection"],
 }
 
-# Base job price in EUR (drives handymen.avg_price)
-BASE_PRICE = {"plumbing": 180, "electrical": 160, "heating_hvac": 260, "carpentry": 200, "painting": 320,
-              "roofing": 550, "flooring": 420, "appliance_repair": 110, "locksmith": 120, "general_maintenance": 90}
+# Base hourly rate in EUR, gross (drives handyman_details.avg_price, an average HOURLY rate, never a job price).
+# The generator adds quality / experience premiums: the median handyman charges ~1.28 x base, which gives realistic
+# German rates, e.g. plumbing ~EUR 68/h, locksmith ~EUR 75/h, painting ~EUR 50/h, general maintenance ~EUR 42/h.
+BASE_HOURLY_RATE = {"plumbing": 53, "electrical": 51, "heating_hvac": 56, "carpentry": 47, "painting": 39,
+                    "roofing": 48, "flooring": 41, "appliance_repair": 48, "locksmith": 59, "general_maintenance": 33}
 
 # Cell 4 — People: German first / last names (ASCII-only spelling so PDFs render with any base font)
 FIRST_NAMES = """Anna Maria Sophie Laura Julia Lena Lea Hannah Emma Mia Lisa Katharina Sarah Jana Nina Franziska Claudia Sabine Petra Monika

@@ -74,8 +74,8 @@ def _skill_score(required: list[str], skills: list[str]) -> tuple[float, list[st
 
 
 def _client_location(cur, client_id: int) -> tuple[float, float]:
-    cur.execute("SELECT latitude, longitude, house, postal_code, city, country FROM maintops.users "
-                "WHERE id = %s", (client_id,))
+    cur.execute("SELECT latitude, longitude, house, postal_code, city, country "
+                "FROM maintops.users WHERE id = %s", (client_id,))
     lat, lon, house, postal, city, country = cur.fetchone()
     if lat is not None and lon is not None:
         return float(lat), float(lon)
@@ -93,7 +93,8 @@ def _client_location(cur, client_id: int) -> tuple[float, float]:
 def find_handymen(client_id: int, incident_id: int) -> dict:
     """Rank handymen for the client's incident; returns {"incident_id", "candidates": [...]}."""
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT status, incident_type, urgency, required_skills FROM maintops.incidents
+        cur.execute("""
+                       SELECT status, incident_type, urgency, required_skills FROM maintops.incidents
                        WHERE id = %s AND reported_by_user_id = %s""", (incident_id, client_id))
         row = cur.fetchone()
         if row is None:
@@ -114,9 +115,11 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
             cur.execute(_CANDIDATES_SQL, {**params, "box": None, "box_lon": None})
             rows = cur.fetchall()
         if not rows:
-            raise ServiceError(f"No available {incident_type.replace('_', ' ')} specialists found right now.")
+            trade = incident_type.replace("_", " ")
+            raise ServiceError(f"No available {trade} specialists found right now.")
 
-        travel = geo.route_matrix([(float(r[3]), float(r[4])) for r in rows], (lat, lon),
+        # by car if the handyman has one, otherwise by public transport
+        travel = geo.travel_times([(float(r[3]), float(r[4]), bool(r[7])) for r in rows], (lat, lon),
                                   user_id=client_id, incident_id=incident_id)
         weights = URGENT_WEIGHTS if urgency in ("high", "critical") else WEIGHTS
 
@@ -151,10 +154,12 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
                 "distance_km": t["distance_km"],
                 "travel_minutes": t["travel_minutes"],
                 "travel_estimated": t["estimated"],
-                "avg_price_eur": float(avg_price) if avg_price is not None else None,
+                "travel_mode": t["mode"],                    # drive | transit (no car)
+                "avg_hourly_rate_eur": float(avg_price) if avg_price is not None else None,   # per hour
                 "active_jobs": active,
                 "has_car": has_car,
                 "matched_skills": matched,
+                "skills_matched": f"{len(matched)} of {len(required)}" if required else None,
                 "factors": {k: round(v, 3) for k, v in factors.items()},
             })
 
@@ -165,7 +170,7 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
             "weights": weights,
             "considered": len(candidates),
             "candidates": [{k: c[k] for k in ("handyman_id", "match_percent", "distance_km", "travel_minutes",
-                                               "travel_estimated", "factors")} for c in top],
+                                               "travel_estimated", "travel_mode", "factors")} for c in top],
         }
         cur.execute("""UPDATE maintops.incidents
                        SET recommended_handyman_ids = %s, agent_reasoning = %s, status = 'recommended'

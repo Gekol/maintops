@@ -189,3 +189,37 @@ def test_compare_job_types_needs_two_eligible_types():
                                        _type_row("roofing", None, 5)])
     assert out["weakest"] is None and out["strongest"] is None
     assert "not enough data" in out["note"]
+
+
+class SplitSession:
+    """Route Matrix (POST, car) and Routing API (GET, public transport) answered separately."""
+
+    def __init__(self, matrix, routing):
+        self.matrix, self.routing, self.routing_calls = matrix, routing, []
+
+    def post(self, url, **k):
+        return self.matrix
+
+    def get(self, url, **k):
+        self.routing_calls.append(k["params"])
+        return self.routing
+
+
+def test_travel_times_routes_by_car_or_public_transport(monkeypatch):
+    matrix = FakeResponse(200, {"sources_to_targets": [[{"distance": 5000, "time": 600, "source_index": 0}]]})
+    routing = FakeResponse(200, {"features": [{"properties": {"distance": 7000, "time": 2100}}]})
+    session = SplitSession(matrix, routing)
+    monkeypatch.setattr(geo, "_get_session", lambda: session)
+    out = geo.travel_times([(52.5, 13.4, False), (52.51, 13.41, True)], (52.52, 13.42))
+    assert out[0] == {"distance_km": 7.0, "travel_minutes": 35.0, "estimated": False, "mode": "transit"}
+    assert out[1] == {"distance_km": 5.0, "travel_minutes": 10.0, "estimated": False, "mode": "drive"}
+    assert [c["mode"] for c in session.routing_calls] == [geo.TRANSIT_MODE]      # only the handyman without a car
+
+
+def test_transit_falls_back_to_slower_flagged_estimate(monkeypatch):
+    session = SplitSession(FakeResponse(200, {}), FakeResponse(500, {}))
+    monkeypatch.setattr(geo, "_get_session", lambda: session)
+    transit = geo.travel_times([(52.5, 13.4, False)], (52.52, 13.42))[0]
+    drive = geo.route_matrix([(52.5, 13.4)], (52.52, 13.42))[0]
+    assert transit["estimated"] and transit["mode"] == "transit"
+    assert transit["travel_minutes"] > drive["travel_minutes"]                     # public transport is slower
