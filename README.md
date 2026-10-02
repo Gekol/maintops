@@ -17,7 +17,7 @@ A client describes a problem in plain language; an agent classifies it and the s
 | Live pipeline | Spark Structured Streaming on CDF | new reviews → affected handymen's scorecards in Lakebase in < 1 min |
 | Analytics | Lakeflow Declarative Pipeline on CDF | agent / tool / API / guardrail / write-action / incident metrics |
 | RAG | Vector Search (`faq_index` on endpoint `maintops_vs`, `databricks-gte-large-en`) | FAQ retrieval for Manny |
-| Geo | Geoapify Geocoding + Route Matrix | address coordinates, real road travel times |
+| Geo | Geoapify Geocoding + Route Matrix + Routing (public transport) | address coordinates, real travel times: by car for handymen with `has_car`, by public transport otherwise |
 
 ## Repository layout
 
@@ -27,13 +27,14 @@ db.py                   re-exports maintops_core.db (shared Lakebase pool)
 maintops_core/          services shared by the app and the agent
   incidents.py          incident lifecycle with ownership + transition checks
   matching.py           find_handymen: filter → pre-filter → Geoapify → deterministic score → top 3
-  geo.py                Geoapify geocoding + route matrix (retries, validation, flagged fallback)
+  geo.py                Geoapify geocoding, route matrix (car) and transit routing (no car); retries, validation, flagged fallback
   rag.py                FAQ vector search
   events.py             app_events logging (→ CDF → analytics)
 agent/
   manny.py              the Manny agent (tools, guardrails, tracing)
-  deploy_manny.ipynb    log → register in UC → agents.deploy
-eval/manny_eval.py      MLflow GenAI evaluation of the deployed agent
+  deploy_manny.ipynb    log → register in UC → staging endpoint → eval gate → agents.deploy (production)
+eval/                   end-to-end agent eval and release gate: manny_eval.py (runner), eval_scenarios.py,
+                        eval_checks.py (deterministic checks), eval_fixtures.py (test accounts in Lakebase)
 pipeline/               Spark pipeline (logic in pipeline_lib.py)
   10–15                 raw export → bronze → silver (+quarantine) → gold → Lakebase
   16_parse_cvs          ai_parse_document over the CV PDFs
@@ -98,9 +99,10 @@ Measured on 2026-09-28 (tables in `bootcamp_students.maintops` unless noted).
 | Area | Evidence |
 |---|---|
 | Spark pipeline | Job `maintops_pipeline`: 1,000,000 incidents → raw JSON with injected defects (1,004,842 rows) → Auto Loader bronze → silver **981,466** clean incidents + **18,534** quarantined with reasons (invalid urgency 5,085 · empty description 4,849 · bad timestamp 3,012 · negative distance 2,936 · rating out of range 2,652) → 23,170 scorecard rows + 9,288 review summaries → Lakebase. Incremental (checkpoints, MERGE); every step logged with checks in `pipeline_runs`. |
-| Third-party API | Geoapify geocoding at registration / address change and one batched Route Matrix call per recommendation; retries on 429/5xx with Retry-After, response validation, fallback estimates flagged `estimated`; every call in `app_events` → `analytics_api_usage_daily`. Unit-tested with mocked HTTP (`tests/`). |
+| Third-party API | Geoapify geocoding at registration / address change one batched Route Matrix call per recommendation for handymen with a car and a Routing API call (`approximated_transit`) for each one without a car; retries on 429/5xx with Retry-After, response validation, fallback estimates flagged `estimated`; every call in `app_events` → `analytics_api_usage_daily`. Unit-tested with mocked HTTP (`tests/`). |
 | Lakebase model | 3 core tables + `app_events` + `handyman_performance` / `handyman_feedback`; PK/FK, 15+ CHECK constraints, handyman-role triggers, duplicate-open-incident guard, `updated_at` triggers, indexes; migrations in `sqls/migrations/`. |
-| Agent | Manny (UC model `manny`, endpoint `maintops-manny`): read tools `search_faq`, `get_my_incidents`, `get_incident`, `find_handymen`, `get_my_jobs`, `get_my_reviews`; write tools `create_incident`, `assign_handyman`, `cancel_incident`, `submit_feedback`, `update_job_status` — confirmation required for consequential actions, identity from the server only. Guardrails (injection refusal, emergency advice, argument validation, grounded-number check, per-session rate limit), MLflow tracing, inference table `manny_payload` (AI Gateway; usage tracking / gateway rate limits are not available for agent endpoints in this workspace, so usage and cost are tracked via `app_events` → analytics), evaluation (`eval/manny_eval.py`). |
+| Agent | Manny (UC model `manny`, endpoint `maintops-manny`): read tools `search_faq`, `get_my_incidents`, `get_incident`, `find_handymen`, `get_my_jobs`, `get_my_reviews`, `search_my_reviews`, `get_my_performance`; write tools `create_incident`, `assign_handyman`, `cancel_incident`, `submit_feedback`, `update_job_status` — explicit confirmation required before assign, cancel, rating and status changes, identity from the server only, every tool call logged with its arguments. Guardrails (injection refusal, emergency advice, argument validation, grounded-number check, per-candidate figure check with one correction round and a data-only fallback (`maintops_core/grounding.py`), confirmation-mismatch guard for ratings, no phone numbers except 112, per-session rate limit), MLflow tracing, inference table `manny_payload` (AI Gateway; usage tracking / gateway rate limits are not available for agent endpoints in this workspace, so usage and cost are tracked via `app_events` → analytics). |
+| Agent evaluation (release gate) | `eval/manny_eval.py`: 58 scenarios (77 turns) covering every tool, CV extraction, guardrails, authorization and prompt-injection attempts, each run 3× on dedicated test accounts. Checks are code, not LLM judgement: Lakebase state after every turn (right row, right values, nothing written before an explicit yes), tool calls and arguments (from `app_events`), every figure in a reply grounded in data the user may see (and, in a sentence about one candidate, in that candidate's own data), skill-coverage claims, no phone numbers except 112, emergency advice. One failed check fails the gate. `maintops_manny_deploy` deploys each new version to a temporary staging endpoint, runs the gate there and promotes to production only on a pass (UC alias `production`). Results: MLflow experiment `maintops_manny_eval` + `eval/results/`. LLM judges (no promises, clear failure messages, safety) are reported, not gating. |
 | Analytics | Lakebase CDF → Declarative Pipeline `maintops_analytics` (refreshed every 30 min, expectations): `analytics_agent_requests_hourly` (incl. tokens and estimated cost), `analytics_tool_usage`, `analytics_api_usage_daily`, `analytics_guardrails_daily`, `analytics_write_actions`, `analytics_feature_usage`, `analytics_incident_activity_daily`, `analytics_recommendation_rank`. |
 | Volume | 1M-incident history processed by the Spark pipeline (above). |
 | Velocity | Lakebase write → CDF → stream → scorecards back in Lakebase: burst of **1,000 reviews for 900 handymen fully reflected in 36.8 s** (`pipeline/latency_test.py`); per-batch latency in `latency_metrics`; checkpointed stream (restart-safe). |
@@ -191,8 +193,9 @@ There are three user experiences:
 The operational schema is the Postgres schema `maintops` with three tables; the DDL in [`sqls/`](sqls/) is the source of truth.
 
 - **`users`**: every account, clients and handymen alike. Identity `id`, unique `email`, `password_hash`, name, `date_of_birth`, `phone`, address (`house`, `postal_code`, `city`, `state`, `country`), `latitude`/`longitude`, `is_handyman`, `is_active`, `created_at`. Unregistered visitors have no row.
-- **`handyman_details`**: one row per handyman, `user_id` is both primary key and foreign key to `users.id`. Holds `specialisations TEXT[]`, `skills TEXT[]`, `experience_summary`, `cv_path`, `cv_raw_text`, `has_car`, and the performance summary `completed_cases`, `rating_avg` (0–5), `rating_count`, `avg_price`.
+- **`handyman_details`**: one row per handyman, `user_id` is both primary key and foreign key to `users.id`. Holds `specialisations TEXT[]`, `skills TEXT[]`, `experience_summary`, `cv_path`, `cv_raw_text`, `has_car`, and the performance summary `completed_cases`, `rating_avg` (0–5), `rating_count`, `avg_price` (the handyman's average hourly rate in EUR, shown to clients as €/h; realistic German rates, e.g. plumbing ~€68/h, locksmith ~€75/h, general maintenance ~€42/h).
 - **`incidents`**: `reported_by_user_id` (client) and `handyman_user_id` (assigned handyman), both foreign keys to `users.id`; `description`, `incident_type`, `urgency` (`low` / `medium` / `high` / `critical`), `recommended_handyman_ids BIGINT[]`, `agent_reasoning`, `distance_km`, `travel_time_minutes`, `status`, `rating` (1–5), `feedback`, and `created_at` / `assigned_at` / `completed_at` / `updated_at`.
+- **`incident_trips`** (migration 004): the handyman's trip to the client, one row per incident (PK/FK `incident_id`). "I'm on my way" on an assigned job records where they set off from (`origin_kind` home / last_job / custom, geocoded address and coordinates), how they travel (`travel_mode`: a handyman with a car chooses car or public transport; without a car it is always public transport and no choice is offered), and the Geoapify route (`distance_km`, `travel_minutes`, `estimated`, `departed_at`). The client's dashboard shows departure time, travel time and expected arrival as an estimate, never the starting address (it may be another client's home). Service: `maintops_core/trips.py`.
 
 ### Specialisations, skills and experience
 
@@ -234,7 +237,7 @@ The LLM handles semantic understanding; deterministic code handles filtering, ro
 1. **Classification (agent).** "Water is leaking from a pipe under my kitchen sink" becomes `incident_type = plumbing`, `urgency = high`, `required_skills = [pipe repair, leak detection]`. The agent creates/updates the incident and calls the search tool.
 2. **Candidate filtering (Lakebase)** by specialisation, skills, workload and other operational constraints.
 3. **Geographic pre-filter.** For large candidate sets, compute straight-line (Haversine) distance from stored coordinates and keep the nearest ~20. Never call Geoapify for every handyman.
-4. **Geoapify Route Matrix** for the shortlist: real road distance and travel time, all origins in one batched request (mind the API's coordinate order).
+4. **Geoapify travel times** for the shortlist, by the handyman's `has_car` flag: handymen with a car get real road distance and driving time from one batched Route Matrix request (mind the API's coordinate order); handymen without a car get a public transport route each from the Routing API (`approximated_transit`, the Route Matrix has no transit mode), up to 4 in parallel. Cards and Manny say "7 min by car" or "35 min by public transport".
 5. **Deterministic scoring** with configurable initial weights:
 
    | Signal | Weight |
@@ -255,7 +258,7 @@ The agent-facing abstraction is a single tool, `find_handymen(incident_id: int)`
 
 1. Client submits a free-text description; the agent determines type and urgency and the incident is created in Lakebase.
 2. The search tool returns three candidates; the client selects one, `handyman_user_id` is set and the status becomes `assigned`.
-3. The handyman sees it among their active jobs, may move it to `in_progress`, then marks it `completed`.
+3. The handyman sees it among their active jobs. When they set off they tap "I'm on my way" (from home, their last job or another address; by car or public transport if they have a car) and the client sees the expected arrival. They move it to `in_progress` on arrival, then mark it `completed`.
 4. The client provides `rating` and `feedback`.
 5. The outcome flows through CDC into Delta and into future performance features.
 
