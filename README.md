@@ -88,9 +88,35 @@ On Databricks the agent endpoint and jobs read `LAKEBASE_PG_URL` and `GEOAPIFY_A
 
 ## Deployment
 
-- **Render (graded):** `render.yaml` runs gunicorn with a `/healthz` health check. Secrets (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `LAKEBASE_PG_URL`, `GEOAPIFY_API_KEY`) are set in the Render dashboard (`sync: false`).
+- **Render (graded):** live at **https://maintops-h3bv.onrender.com** (free instance: the first request after a quiet period can take about 50 s). `render.yaml` runs gunicorn with a `/healthz` health check; every push to `main` deploys automatically. Secrets (`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `LAKEBASE_PG_URL`, `GEOAPIFY_API_KEY`) are set in the Render dashboard (`sync: false`).
 - **Databricks Apps:** `app.yaml` runs the same gunicorn command on port 8000 with secrets from the app's resources.
 - **Databricks side:** `databricks bundle deploy -p <profile>` deploys every job and the analytics pipeline (`databricks.yml`); `databricks bundle run maintops_manny_deploy` (re)deploys Manny; `python sqls/migrate.py` applies schema migrations.
+
+### Databricks token for Manny (for instructors)
+
+The web app calls Manny (Model Serving endpoint `maintops-manny`) with `DATABRICKS_HOST` + `DATABRICKS_TOKEN`. Student
+accounts in the bootcamp workspace cannot create personal access tokens, and a student's CLI OAuth token expires after
+1 hour, so on the Render deployment Manny only answers while a fresh token is set. Everything else (login, dashboards,
+recommendations shown on cards, ratings, job status, "I'm on my way" trips, Geoapify routing) works without it; CV upload
+at registration also needs the token.
+
+To assess the app with Manny, a workspace admin creates a token for the session (8 hours here) and sets it:
+
+```bash
+# 1. Create an 8-hour token (prints token_value once; the token's owner needs CAN QUERY on maintops-manny)
+databricks tokens create --lifetime-seconds 28800 --comment "MaintOps assessment" -p <your-profile>
+#    Without the CLI: workspace Settings → Developer → Access tokens → Generate new token (lifetime: 1 day)
+
+# 2a. Use it on Render: dashboard → service "maintops" → Environment → DATABRICKS_TOKEN = <token_value> → Save
+#     (Render redeploys in about a minute)
+# 2b. Or run the app locally: put DATABRICKS_HOST, DATABRICKS_TOKEN, LAKEBASE_PG_URL, GEOAPIFY_API_KEY and
+#     FLASK_SECRET_KEY in .env (see "Running the app locally"), then: flask run
+```
+
+Without a personal access token, a 1-hour OAuth token works the same way:
+`databricks auth token -p <your-profile>` (field `access_token`). Demo accounts: see "Synthetic data" below
+(all share the demo password `MaintOps!2026`), e.g. client `thomaskoch37@example.com`, handyman
+`ute.wisniewski15@example.net`.
 
 ## Rubric evidence
 
