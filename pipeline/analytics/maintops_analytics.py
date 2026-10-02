@@ -10,6 +10,7 @@ analytics-ready tables. Expectations enforce data quality and are visible in the
 """
 
 import dlt
+from pyspark.sql import Window
 from pyspark.sql import functions as F
 
 SOURCE = "bootcamp_students.maintops"
@@ -53,7 +54,10 @@ def analytics_events():
 def analytics_incident_changes():
     return _changes("lb_incidents_history").select(
         "id", F.col("_pg_change_type").alias("change_type"), F.col("_timestamp").cast("timestamp").alias("changed_at"),
-        "status", "incident_type", "urgency", "handyman_user_id", "recommended_handyman_ids", "rating")
+        "status", "incident_type", "urgency", "handyman_user_id", "recommended_handyman_ids", "rating",
+        F.col("completed_at").cast("timestamp").alias("completed_at"),
+        F.col("hours_worked").cast("decimal(5,2)").alias("hours_worked"),
+        F.col("amount_paid_eur").cast("decimal(10,2)").alias("amount_paid_eur"))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -148,3 +152,21 @@ def analytics_recommendation_rank():
             .dropDuplicates(["id"])
             .withColumn("chosen_rank", F.array_position(ids, F.col("handyman_user_id").cast("string")))
             .groupBy("chosen_rank").agg(F.count("*").alias("assignments")))
+
+
+@dlt.table(
+    name="analytics_billing_monthly",
+    comment="Completed jobs per completion month and type: hours worked, amount paid, hourly rate (amount / hours)",
+)
+@dlt.expect("rate_plausible", "avg_hourly_rate IS NULL OR avg_hourly_rate BETWEEN 10 AND 300")
+def analytics_billing_monthly():
+    # The latest change of each incident; deleted incidents (latest change = delete) drop out
+    latest = (dlt.read("analytics_incident_changes")
+              .withColumn("_rn", F.row_number().over(
+                  Window.partitionBy("id").orderBy(F.desc("changed_at"), F.asc(F.col("change_type") != "delete"))))
+              .where("_rn = 1 AND change_type <> 'delete' AND status = 'completed' AND hours_worked IS NOT NULL"))
+    return (latest.groupBy(F.date_trunc("month", "completed_at").alias("month"), "incident_type")
+            .agg(F.count("*").alias("jobs"),
+                 F.sum("hours_worked").alias("hours_worked"),
+                 F.sum("amount_paid_eur").alias("amount_paid_eur"))
+            .withColumn("avg_hourly_rate", F.round(F.col("amount_paid_eur") / F.col("hours_worked"), 2)))

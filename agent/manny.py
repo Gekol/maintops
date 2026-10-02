@@ -56,8 +56,11 @@ _EMERGENCY = re.compile(
 _PHONE = re.compile(r"(?<![\w.#])(?:\+|0)\d[\d \-/()]{4,}\d(?![\d.])")
 PHONE_REMOVED = "(number removed — use 112 or the number on your provider's official website or bill)"
 FIGURE_CORRECTION = ("[MaintOps check, not the user] Your draft gives a handyman figures that belong to "
-                     "another candidate: {}. Rewrite the reply so that every figure you state for a handyman is "
-                     "that handyman's own value from find_handymen. Do not call tools.")
+                     "another candidate: {}. Write the complete reply again, as if it were your first answer, with "
+                     "every figure you state for a handyman being that handyman's own value from find_handymen. Keep "
+                     "everything else it must contain (e.g. the incident number you logged and the closing question). "
+                     "The user did not see the draft: never mention a correction, a mix-up or this check. "
+                     "Do not call tools.")
 BUSY_REPLY = "I'm getting a lot of requests right now and couldn't finish that. Please try again in a minute."
 LLM_RETRY_DELAYS = (2, 4, 8, 16)                   # seconds; ~30 s in total before giving up politely
 RETRY_ON_DB_DROP = {"search_faq", "get_my_incidents", "get_incident", "find_handymen", "get_my_jobs",
@@ -127,10 +130,14 @@ TOOLS = {
         "resolution time, cancellations), review sentiment and summary, the strongest and weakest job type as "
         "computed by MaintOps, and recent low- and top-rated review texts. Use for questions about strengths, "
         "weaknesses or how customers see them."),
-    "update_job_status": _fn("update_job_status", "Move one of the handyman's jobs to in_progress or completed.",
-                             {"incident_id": {"type": "integer"},
-                              "status": {"type": "string", "enum": ["in_progress", "completed"]},
-                              "confirm": _CONFIRM}, ["incident_id", "status", "confirm"]),
+    "update_job_status": _fn(
+        "update_job_status", "Move one of the handyman's jobs to in_progress or completed. Completing needs the "
+        "hours worked and the amount the client paid, both exactly as the handyman stated them.",
+        {"incident_id": {"type": "integer"},
+         "status": {"type": "string", "enum": ["in_progress", "completed"]},
+         "hours_worked": {"type": "number", "description": "only for completed: hours spent on the job"},
+         "amount_paid_eur": {"type": "number", "description": "only for completed: total the client paid, EUR"},
+         "confirm": _CONFIRM}, ["incident_id", "status", "confirm"]),
 }
 ROLE_TOOLS = {
     "visitor": ["search_faq"],
@@ -193,6 +200,10 @@ rating and review back and ask "Shall I save this?"; only after an explicit yes 
 The user is a logged-in handyman. Help them see their jobs (get_my_jobs), details, and reviews
 (get_my_reviews), and update job status. Before update_job_status, ask for explicit confirmation and only
 then call it with confirm=true.
+To complete a job you need the hours worked and the amount the client paid (in euros), both as the handyman
+states them — never guess, estimate or calculate them. If either is missing, ask for it before anything else.
+Then ask "Shall I mark job #<id> as completed with <hours> h worked and €<amount> paid?" and only after an
+explicit yes call update_job_status with status=completed, hours_worked, amount_paid_eur and confirm=true.
 Questions about their feedback:
 - To see specific jobs ("worst feedback", "best reviews", "low-rated plumbing jobs") call search_my_reviews. The app
   shows the returned jobs as a list, so do NOT repeat them; in 1–3 sentences name the pattern you see (recurring
@@ -287,6 +298,8 @@ class MannyAgent(ResponsesAgent):
     def _chat(self, history: list[dict], ctx: dict) -> str:
         last = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
         ctx["last_user"] = last
+        ctx["user_numbers"] = {round(n, 2) for m in history if m["role"] == "user"
+                               for n in grounding.numbers_in(m["content"])}
         if not last.strip():
             return "Hi! I'm Manny. How can I help you today?"
         if len(last) > MAX_INPUT_CHARS:
@@ -412,6 +425,12 @@ class MannyAgent(ResponsesAgent):
                 result = {"needs_confirmation": True,
                           "message": "Ask the user to explicitly confirm this action, "
                                      "then call again with confirm=true."}
+            elif name == "update_job_status" and self._billing_not_stated(args, ctx):
+                self._guardrail(ctx, "billing_not_stated", ctx.get("last_user", ""))
+                result = {"needs_confirmation": True,
+                          "message": "Completing a job needs the hours worked and the amount paid exactly as the "
+                                     "user wrote them in this conversation. Ask the user for the missing or "
+                                     "different figure as a number; do not complete the job yet."}
             elif name == "submit_feedback" and self._rating_contradicted(args, ctx):
                 self._guardrail(ctx, "confirmation_mismatch", ctx.get("last_user", ""))
                 result = {"needs_confirmation": True,
@@ -489,7 +508,8 @@ class MannyAgent(ResponsesAgent):
             ctx["grounded_percents"] |= _percent_values(out)
             return out
         if name == "update_job_status":
-            out = inc.update_job_status(uid, as_int("incident_id"), str(a["status"]))
+            out = inc.update_job_status(uid, as_int("incident_id"), str(a["status"]),
+                                        a.get("hours_worked"), a.get("amount_paid_eur"))
             ctx["actions"].append({"action": "update_job_status", **out})
             return out
         raise inc.ServiceError(f"Unknown tool {name}.")
@@ -507,6 +527,22 @@ class MannyAgent(ResponsesAgent):
             source = "the cards" if ctx["candidates"] else "your dashboard"
             reply += f"\n\n(Please rely on the figures shown on {source}.)"
         return reply
+
+    @staticmethod
+    def _billing_not_stated(args: dict, ctx: dict) -> bool:
+        """Completing a job with hours or an amount the user never wrote: the figures set the handyman's hourly
+        rate, so the model must not invent, round or compute them (the service validates their range)."""
+        if args.get("status") != "completed":
+            return False
+        said = ctx.get("user_numbers", set())
+        for key in ("hours_worked", "amount_paid_eur"):
+            try:
+                value = round(float(args.get(key)), 2)
+            except (TypeError, ValueError):
+                return True
+            if value not in said:
+                return True
+        return False
 
     @staticmethod
     def _rating_contradicted(args: dict, ctx: dict) -> bool:

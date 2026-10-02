@@ -141,6 +141,34 @@ def test_job_status_validation():
         incidents.update_job_status(1, 1, "cancelled")
 
 
+@pytest.mark.parametrize("hours, amount, message", [
+    (None, 180, "enter the hours worked and the amount"),
+    (3, "", "enter the hours worked and the amount"),
+    ("three", 180, "Hours worked must be a number"),
+    (-2, 180, "cannot be negative"),
+    (0.1, 5, "between 0.25 and 24"),
+    (30, 900, "between 0.25 and 24"),
+    (20, 12000, "at most €10,000"),
+    (3, 2000, "€666.67 per hour"),
+    (8, 20, "€2.50 per hour"),
+])
+def test_billing_validation(hours, amount, message):
+    with pytest.raises(incidents.ServiceError, match=message):
+        incidents.validate_billing(hours, amount)
+
+
+def test_billing_accepts_form_strings():
+    assert incidents.validate_billing("3,5", "€182") == (3.5, 182.0)
+    assert incidents.validate_billing(2, 96.456) == (2.0, 96.46)
+
+
+def test_billing_only_when_completing():
+    with pytest.raises(incidents.ServiceError, match="only when the job is completed"):
+        incidents.update_job_status(1, 1, "in_progress", hours_worked=2, amount_paid_eur=90)
+    with pytest.raises(incidents.ServiceError, match="enter the hours worked"):
+        incidents.update_job_status(1, 1, "completed")
+
+
 @pytest.mark.parametrize("kwargs, message", [
     ({"order": "cheapest"}, "Unknown order"),
     ({"incident_type": "astrology"}, "Unknown incident type"),

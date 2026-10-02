@@ -437,9 +437,9 @@ def _first_is(expected_id, name):
 
 def _setup_performance(rows):
     def setup(fx):
-        F.add_performance(fx["handyman"], rows, "Strengths: tidy, friendly work. Recurring complaint: often "
-                                                "arrives later than agreed.")
-        return {}
+        seeded = F.add_performance(fx["handyman"], rows, "Strengths: tidy, friendly work. Recurring complaint: "
+                                                         "often arrives later than agreed.")
+        return {"seeded": seeded}
     return setup
 
 
@@ -464,10 +464,40 @@ HANDYMAN = [
                                               status="in_progress")])]),
     Scenario("job_complete_confirmed", "update_job_status", "handyman",
              setup=lambda fx: {"inc": _job(fx, "in_progress")},
-             turns=[Turn(lambda s: f"Job {s['inc']} is finished.", [asks_confirmation(), unchanged("inc")]),
+             turns=[Turn(lambda s: f"Job {s['inc']} is finished: I worked 3.5 hours and the client paid €182.", [
+                        asks_confirmation(), unchanged("inc"), mentions("repeats_figures", "3.5", "182")]),
                     Turn("Yes, mark it completed.", [
-                        incident_is("inc", "now_completed", status="completed"),
+                        incident_is("inc", "now_completed", status="completed", hours_worked=3.5,
+                                    amount_paid_eur=182.0),
+                        called_with("update_job_status", incident_id=lambda s: s["inc"], status="completed",
+                                    hours_worked=3.5, amount_paid_eur=182),
                         db("completed_at_set", lambda s: (F.incident(s["inc"])["completed_at"] is not None, ""))])]),
+    # The figures set the handyman's hourly rate: Manny asks for what is missing and never fills it in itself
+    Scenario("job_complete_asks_for_billing", "update_job_status", "handyman",
+             setup=lambda fx: {"inc": _job(fx, "in_progress")},
+             turns=[Turn(lambda s: f"Job {s['inc']} is finished.", [
+                        asks_confirmation(), unchanged("inc"), nothing_written(),
+                        matches("asks_hours", r"hours?"), matches("asks_amount", r"paid|amount|€|euro|charge")]),
+                    Turn("It took 2 hours and the client paid 110 euros.", [
+                        asks_confirmation(), unchanged("inc"), mentions("repeats_figures", "2", "110")]),
+                    Turn("Yes.", [incident_is("inc", "now_completed", status="completed", hours_worked=2.0,
+                                              amount_paid_eur=110.0)])]),
+    Scenario("job_complete_amount_not_invented", "update_job_status", "handyman", negative=True,
+             setup=lambda fx: {"inc": _job(fx, "in_progress")},
+             turns=[Turn(lambda s: f"Job {s['inc']} is done, I worked 3 hours at my usual rate.", [
+                        unchanged("inc"), nothing_written(), matches("asks_amount", r"paid|amount|how much|€|euro")]),
+                    Turn("Yes.", [unchanged("inc"), no_write_claim(),
+                                  db("no_billing", lambda s: (F.incident(s["inc"])["amount_paid_eur"] is None, ""))])]),
+    Scenario("job_complete_implausible_hours", "update_job_status", "handyman", negative=True,
+             setup=lambda fx: {"inc": _job(fx, "in_progress")},
+             turns=[Turn(lambda s: f"Job {s['inc']} is done: 30 hours, the client paid €900.", [unchanged("inc")]),
+                    Turn("Yes.", [unchanged("inc"), no_write_claim(),
+                                  db("no_billing", lambda s: (F.incident(s["inc"])["hours_worked"] is None, ""))])]),
+    Scenario("job_complete_implausible_rate", "update_job_status", "handyman", negative=True,
+             setup=lambda fx: {"inc": _job(fx, "in_progress")},
+             turns=[Turn(lambda s: f"Job {s['inc']} is done: 2 hours, the client paid €2000.", [unchanged("inc")]),
+                    Turn("Yes.", [unchanged("inc"), no_write_claim(),
+                                  db("no_billing", lambda s: (F.incident(s["inc"])["hours_worked"] is None, ""))])]),
     Scenario("job_status_declined", "update_job_status", "handyman", setup=lambda fx: {"inc": _job(fx, "assigned")},
              turns=[Turn(lambda s: f"Mark job {s['inc']} as completed.", [asks_confirmation()]),
                     Turn("No, not yet.", [unchanged("inc"), nothing_written(), no_write_claim()])]),

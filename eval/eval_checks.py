@@ -125,12 +125,17 @@ def _mentions(reply: str, candidates: list[dict]) -> list[tuple[int, dict]]:
 
 
 def skill_claim_errors(reply: str, candidates: list[dict], required_count: int) -> list[str]:
-    """'Matches all skills' / 'X of Y skills' must match the candidate the sentence is about: the one named in the
-    sentence, else the one named most recently before it ("All three …" = every candidate)."""
+    """'Matches all skills' / 'X of Y skills' must match the candidate the claim is about: the one named closest before
+    it in the same sentence; else every candidate ("All three …"), the remaining ones ("the other two …"), any named
+    after it in the sentence, or the one named most recently before the sentence."""
     mentions = _mentions(reply, candidates)
 
     def about(pos: int) -> list[dict]:
         start, end = _sentence_bounds(reply, pos)
+        before = [(p, c) for p, c in mentions if start <= p < pos]
+        if before:                                      # "…, and Susanne Becker only matches 2 of 4" = Susanne
+            nearest = max(p for p, _ in before)         # (a shared first name: every candidate it can mean)
+            return list({c["handyman_id"]: c for p, c in before if p == nearest}.values())
         if _ALL_CANDIDATES.search(reply[start:end]):
             return candidates
         if _THE_OTHERS.search(reply[start:end]):            # "the other two …" = all but the one just named

@@ -121,6 +121,7 @@ def _allowed_numbers(sc, s: dict, t: dict, history: list[dict]) -> set[float]:
         if m["role"] == "user":
             allowed |= set(C.numbers_in(m["content"]))
     allowed |= C.values_in(t["custom"])
+    allowed |= C.values_in(s.get("seeded"))                # what setup wrote, even if the live stream since replaced it
     if any(m["role"] == "user" and RATING_TALK.search(m["content"]) for m in history):
         allowed |= {1.0, 2.0, 3.0, 4.0, 5.0}                # the rating scale itself, e.g. "a 5?"
     uid = s["fx"].get(sc.role)
@@ -138,6 +139,8 @@ def _allowed_numbers(sc, s: dict, t: dict, history: list[dict]) -> set[float]:
         allowed |= C.values_in([inc.list_handyman_jobs(uid, 100), inc.get_handyman_reviews(uid, 50),
                                 inc.get_handyman_performance(uid), inc.search_handyman_reviews(uid, "worst", limit=20)])
     for call in t["tools"]:
+        if call["error"]:                                   # a refusal Manny relays: "€1000 per hour; at most €300"
+            allowed |= set(C.numbers_in(call["error"]))
         if call["name"] == "search_faq" and call["args"].get("question"):
             allowed |= C.values_in(rag.search_faq(str(call["args"]["question"]), k=3))
     if t["custom"].get("candidates"):

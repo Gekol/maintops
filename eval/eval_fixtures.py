@@ -135,9 +135,11 @@ def add_incident(client: int, description: str, *, status: str = "open", inciden
     return incident_id
 
 
-def add_performance(handyman: int, rows: list[dict], review_summary: str | None = None) -> None:
+def add_performance(handyman: int, rows: list[dict], review_summary: str | None = None) -> list[dict]:
     """Seed the scorecard tables the pipeline normally writes: rows = [{incident_type, rated_jobs,
-    successful_jobs, avg_rating}], plus an 'all' row computed from them."""
+    successful_jobs, avg_rating}], plus an 'all' row computed from them. Returns the seeded rows (with
+    success_rate): if the live stream is running it recomputes this handyman's scorecard from the fixture
+    jobs, so after a turn the database may no longer hold the figures Manny was given."""
     total_rated = sum(r["rated_jobs"] for r in rows)
     total_ok = sum(r["successful_jobs"] for r in rows)
     all_row = {"incident_type": "all", "rated_jobs": total_rated, "successful_jobs": total_ok,
@@ -158,6 +160,7 @@ def add_performance(handyman: int, rows: list[dict], review_summary: str | None 
                            VALUES (%s, %s, %s, 0.7, 0.2, 0.5, %s, now(), now())""",
                         (handyman, total_rated, min(total_rated, 20), review_summary))
         conn.commit()
+    return [{**r, "success_rate": round(r["successful_jobs"] / r["rated_jobs"], 4)} for r in [*rows, all_row]]
 
 
 def recommend(client: int, description: str, incident_type: str, urgency: str, skills: list[str]) -> dict:
@@ -176,10 +179,11 @@ def recommend(client: int, description: str, incident_type: str, urgency: str, s
 
 
 _INCIDENT_SQL = """SELECT id, reported_by_user_id, handyman_user_id, status, incident_type, urgency, rating, feedback,
-                          recommended_handyman_ids, completed_at, description, required_skills
+                          recommended_handyman_ids, completed_at, description, required_skills,
+                          hours_worked::float, amount_paid_eur::float
                    FROM maintops.incidents"""
 _INCIDENT_KEYS = ("id", "reported_by", "handyman", "status", "incident_type", "urgency", "rating", "feedback",
-                  "recommended", "completed_at", "description", "required_skills")
+                  "recommended", "completed_at", "description", "required_skills", "hours_worked", "amount_paid_eur")
 
 
 @_retry_on_drop

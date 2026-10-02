@@ -154,3 +154,13 @@ def test_hourly_unit_anywhere_in_the_sentence():
     assert prices_without_hourly_unit("His hourly rate has averaged about €65 on past jobs.") == []
     assert prices_without_hourly_unit(
         "They are cheaper per hour (about €47 and €51 respectively vs. Andrea's ~€67).") == []
+
+
+def test_a_name_in_the_sentence_beats_the_other_two():
+    cands = [{"handyman_id": 1, "name": "Tomasz Albrecht", "matched_skills": ["a", "b", "c"]},
+             {"handyman_id": 2, "name": "Ahmet Bohm", "matched_skills": ["a", "b", "c"]},
+             {"handyman_id": 3, "name": "Susanne Becker", "matched_skills": ["a", "b"]}]
+    reply = ("My top pick is Tomasz Albrecht, who covers 3 of 4 required skills. The other two are also solid: "
+             "Ahmet Bohm is a 1-minute drive away, and Susanne Becker only matches 2 of 4 required skills.")
+    assert skill_claim_errors(reply, cands, 4) == []
+    assert skill_claim_errors(reply.replace("Susanne Becker only", "Ahmet Bohm only"), cands, 4)

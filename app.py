@@ -299,7 +299,7 @@ def dashboard():
                 # Fetch assigned incidents
                 cur.execute(
                     "SELECT id, description, incident_type, urgency, "
-                    "status, created_at, rating, feedback "
+                    "status, created_at, rating, feedback, hours_worked, amount_paid_eur "
                     "FROM maintops.incidents "
                     "WHERE handyman_user_id = %s "
                     "ORDER BY status IN "
@@ -313,13 +313,15 @@ def dashboard():
                         "incident_type": r[2], "urgency": r[3],
                         "status": r[4], "created_at": r[5],
                         "rating": r[6], "feedback": r[7],
+                        "hours_worked": r[8], "amount_paid_eur": r[9],
                     })
             else:
                 # Fetch client's reported incidents (with handyman name)
                 cur.execute(
                     "SELECT i.id, i.description, i.incident_type, i.urgency, "
                     "i.status, i.created_at, "
-                    "u.first_name || ' ' || u.last_name AS handyman_name, i.rating, i.feedback "
+                    "u.first_name || ' ' || u.last_name AS handyman_name, i.rating, i.feedback, "
+                    "i.hours_worked, i.amount_paid_eur "
                     "FROM maintops.incidents i "
                     "LEFT JOIN maintops.users u ON i.handyman_user_id = u.id "
                     "WHERE i.reported_by_user_id = %s "
@@ -332,6 +334,7 @@ def dashboard():
                         "incident_type": r[2], "urgency": r[3],
                         "status": r[4], "created_at": r[5],
                         "handyman_name": r[6], "rating": r[7], "feedback": r[8],
+                        "hours_worked": r[9], "amount_paid_eur": r[10],
                     })
 
     # "I'm on my way" trips: the handyman's own view, or the client's estimate (no starting address)
@@ -410,16 +413,24 @@ def incident_cancel(incident_id):
 @app.route("/jobs/<int:incident_id>/status", methods=["POST"])
 @handyman_required
 def job_status(incident_id):
-    """Handyman moves a job to in_progress or completed."""
+    """Handyman moves a job to in_progress, or completes it with the hours worked and the amount paid."""
     new_status = request.form.get("status", "")
+    billing = {}
+    if new_status == "completed":
+        billing = {"hours_worked": request.form.get("hours_worked", ""),
+                   "amount_paid_eur": request.form.get("amount_paid_eur", "")}
     try:
-        inc.update_job_status(int(current_user.id), incident_id, new_status)
+        out = inc.update_job_status(int(current_user.id), incident_id, new_status, **billing)
     except inc.ServiceError as exc:
         flash(str(exc), "error")
         return redirect(url_for("dashboard"))
     log_event("ui_action", "update_job_status", True, user_id=int(current_user.id), incident_id=incident_id,
-              details={"status": new_status})
-    flash(f"Job #{incident_id} is now {new_status.replace('_', ' ')}.", "success")
+              details={k: v for k, v in out.items() if k != "incident_id"})
+    if new_status == "completed":
+        flash(f"Job #{incident_id} is now completed: {out['hours_worked']:g} h, €{out['amount_paid_eur']:.2f}.",
+              "success")
+    else:
+        flash(f"Job #{incident_id} is now {new_status.replace('_', ' ')}.", "success")
     return redirect(url_for("dashboard"))
 
 

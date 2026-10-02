@@ -123,6 +123,28 @@ SKILLS = {
 BASE_HOURLY_RATE = {"plumbing": 53, "electrical": 51, "heating_hvac": 56, "carpentry": 47, "painting": 39,
                     "roofing": 48, "flooring": 41, "appliance_repair": 48, "locksmith": 59, "general_maintenance": 33}
 
+# Typical hours on site per job type. A completed job's hours_worked = typical x 0.5-1.5 (quarter hours, min 0.5) and
+# amount_paid_eur = hours x the handyman's hourly rate (avg_price) x 0.9-1.1. The pipeline derives each handyman's
+# hourly rate back from these figures, so it lands within a few cents of avg_price.
+TYPICAL_JOB_HOURS = {"plumbing": 2.5, "electrical": 3.0, "heating_hvac": 3.5, "carpentry": 4.0, "painting": 7.0,
+                     "roofing": 6.0, "flooring": 7.0, "appliance_repair": 1.5, "locksmith": 1.0, "general_maintenance": 2.0}
+
+def billing_columns(incidents, handyman_details):
+    """incidents (id, incident_type, status, handyman_user_id) + hours_worked, amount_paid_eur for completed jobs.
+    Both figures come from a hash of the incident id, not rand(): the generator (05) and the backfill of existing
+    incidents (08) produce exactly the same values."""
+    from pyspark.sql import functions as F
+    u = lambda salt: (F.abs(F.xxhash64(F.col("id"), F.lit(salt))) % 10000) / 10000.0
+    typical = F.element_at(F.create_map(*[F.lit(x) for kv in TYPICAL_JOB_HOURS.items() for x in kv]), F.col("incident_type"))
+    hours = F.greatest(F.lit(0.5), F.round(typical * (0.5 + u("hours")) * 4) / 4)
+    rate = handyman_details.select(F.col("user_id").alias("handyman_user_id"), F.col("avg_price").cast("double").alias("_rate"))
+    completed = (F.col("status") == "completed") & F.col("handyman_user_id").isNotNull() & F.col("_rate").isNotNull()
+    return (incidents.join(F.broadcast(rate), "handyman_user_id", "left")
+            .withColumn("hours_worked", F.when(completed, hours).cast("decimal(5,2)"))
+            .withColumn("amount_paid_eur", F.when(completed, F.round(F.col("hours_worked") * F.col("_rate") * (0.9 + 0.2 * u("amount")), 2))
+                                            .cast("decimal(10,2)"))
+            .drop("_rate"))
+
 # Cell 4 — People: German first / last names (ASCII-only spelling so PDFs render with any base font)
 FIRST_NAMES = """Anna Maria Sophie Laura Julia Lena Lea Hannah Emma Mia Lisa Katharina Sarah Jana Nina Franziska Claudia Sabine Petra Monika
 Andrea Susanne Birgit Karin Heike Ute Ingrid Christina Nadine Melanie Aylin Fatma Elif Zeynep Agnieszka Olga Natalia Ewa Ilona Yasmin Leyla

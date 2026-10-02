@@ -100,6 +100,12 @@ resources:
             - task_key: validate
           notebook_task:
             notebook_path: ./data_synthesis/07_load_lakebase.ipynb
+        # Billing figures for the existing history (migration 005); a no-op after a fresh generate + load
+        - task_key: backfill_billing
+          depends_on:
+            - task_key: load_lakebase
+          notebook_task:
+            notebook_path: ./data_synthesis/08_backfill_billing.ipynb
 
     # Batch pipeline: 1M-incident history → validated silver → handyman scorecards → Lakebase; CV PDFs → text.
     # Incremental and idempotent (Auto Loader / stream checkpoints, MERGE); every step logs to pipeline_runs.
@@ -108,6 +114,8 @@ resources:
       parameters:
         - name: run_id
           default: "{{job.run_id}}"
+        - name: force            # true = rebuild raw export, bronze, silver and quarantine from scratch
+          default: "false"
       tasks:
         - task_key: export_raw
           notebook_task:

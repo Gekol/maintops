@@ -963,6 +963,11 @@ a:hover { color: var(--secondary); }
 .trip-form label { display: block; font-size: 0.88rem; margin: 0.25rem 0; }
 .trip-form input[type="text"] { width: 100%; margin-top: 0.3rem; padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
                                 border: 1px solid var(--border); background: #111827; color: var(--text-primary); }
+.complete-row { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; margin: 0.6rem 0 0.3rem; }
+.complete-form .complete-row label { margin: 0; color: var(--text-secondary); font-size: 0.8rem; }
+.complete-row input { display: block; width: 8.5rem; margin-top: 0.25rem; padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
+                      border: 1px solid var(--border); background: #111827; color: var(--text-primary); }
+.job-billing { margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.88rem; }
 .dash-feedback-form { margin-top: 0.8rem; }
 .dash-feedback-form label { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.35rem; }
 .dash-feedback-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }

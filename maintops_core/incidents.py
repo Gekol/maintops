@@ -18,6 +18,9 @@ SPECIALISATIONS = ["plumbing", "electrical", "heating_hvac", "carpentry", "paint
 URGENCIES = ["low", "medium", "high", "critical"]
 ACTIVE_STATUSES = ("assigned", "in_progress")
 MAX_ACTIVE_JOBS = 3        # a handyman with this many active jobs is not recommended or assigned
+MAX_HOURS = 24             # hours worked on one job (DB CHECK: 0 < hours <= 24)
+MAX_AMOUNT_EUR = 10_000    # amount paid for one job
+RATE_RANGE_EUR = (10, 300)  # plausible €/h; outside this range the figures are most likely a typo
 
 
 class ServiceError(Exception):
@@ -29,13 +32,13 @@ class ServiceError(Exception):
 # ─────────────────────────────────────────────────────────────
 _INCIDENT_COLS = ("id, description, incident_type, urgency, status, required_skills, handyman_user_id, "
                   "recommended_handyman_ids, distance_km, travel_time_minutes, rating, feedback, "
-                  "created_at, assigned_at, completed_at")
+                  "created_at, assigned_at, completed_at, hours_worked, amount_paid_eur")
 
 
 def _incident_dict(row) -> dict:
     keys = [c.strip() for c in _INCIDENT_COLS.split(",")]
     d = dict(zip(keys, row, strict=True))
-    for k in ("distance_km", "travel_time_minutes"):
+    for k in ("distance_km", "travel_time_minutes", "hours_worked", "amount_paid_eur"):
         d[k] = float(d[k]) if d[k] is not None else None
     return d
 
@@ -360,11 +363,49 @@ def submit_feedback(client_id: int, incident_id: int, rating: int, feedback: str
     return {"incident_id": incident_id, "rating": rating, "handyman_id": handyman_id}
 
 
-def update_job_status(handyman_id: int, incident_id: int, new_status: str) -> dict:
-    """Handyman moves their job assigned → in_progress → completed."""
+def _number(value, name: str) -> float:
+    """A positive-or-zero number from the form or the agent ("3,5" and "€180" are accepted)."""
+    if isinstance(value, bool):
+        raise ServiceError(f"{name} must be a number.")
+    if isinstance(value, str):
+        value = value.strip().replace("€", "").replace(",", ".").strip()
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        raise ServiceError(f"{name} must be a number.") from None
+    if n != n or n < 0:                                  # NaN or negative
+        raise ServiceError(f"{name} cannot be negative.")
+    return n
+
+
+def validate_billing(hours_worked, amount_paid_eur) -> tuple[float, float]:
+    """Hours worked and amount paid for a completed job, rounded to cents; raises ServiceError if implausible."""
+    if hours_worked is None or hours_worked == "" or amount_paid_eur is None or amount_paid_eur == "":
+        raise ServiceError("To complete a job, enter the hours worked and the amount the client paid.")
+    hours = round(_number(hours_worked, "Hours worked"), 2)
+    amount = round(_number(amount_paid_eur, "Amount paid"), 2)
+    if not 0.25 <= hours <= MAX_HOURS:
+        raise ServiceError(f"Hours worked must be between 0.25 and {MAX_HOURS}.")
+    if amount > MAX_AMOUNT_EUR:
+        raise ServiceError(f"The amount paid can be at most €{MAX_AMOUNT_EUR:,}.")
+    low, high = RATE_RANGE_EUR
+    if not low <= amount / hours <= high:
+        raise ServiceError(f"€{amount:g} for {hours:g} h is €{amount / hours:.2f} per hour; rates between "
+                           f"€{low} and €{high} per hour are accepted. Please check both figures.")
+    return hours, amount
+
+
+def update_job_status(handyman_id: int, incident_id: int, new_status: str,
+                      hours_worked=None, amount_paid_eur=None) -> dict:
+    """Handyman moves their job assigned → in_progress → completed. Completing records the hours worked and the
+    amount paid, from which the pipeline derives the handyman's hourly rate."""
     allowed = {"in_progress": ("assigned",), "completed": ("assigned", "in_progress")}
     if new_status not in allowed:
         raise ServiceError("Status can only be changed to 'in_progress' or 'completed'.")
+    if new_status == "completed":
+        hours, amount = validate_billing(hours_worked, amount_paid_eur)
+    elif hours_worked not in (None, "") or amount_paid_eur not in (None, ""):
+        raise ServiceError("Hours and amount are recorded only when the job is completed.")
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute("""SELECT status FROM maintops.incidents
                        WHERE id = %s AND handyman_user_id = %s FOR UPDATE""", (incident_id, handyman_id))
@@ -376,8 +417,9 @@ def update_job_status(handyman_id: int, incident_id: int, new_status: str) -> di
         if new_status == "completed":
             cur.execute("""
                            UPDATE maintops.incidents
-                           SET status = 'completed', completed_at = CURRENT_TIMESTAMP
-                           WHERE id = %s""", (incident_id,))
+                           SET status = 'completed', completed_at = CURRENT_TIMESTAMP,
+                               hours_worked = %s, amount_paid_eur = %s
+                           WHERE id = %s""", (hours, amount, incident_id))
             cur.execute("UPDATE maintops.handyman_details SET completed_cases = completed_cases + 1 "
                         "WHERE user_id = %s", (handyman_id,))
         else:
@@ -385,4 +427,6 @@ def update_job_status(handyman_id: int, incident_id: int, new_status: str) -> di
                 UPDATE maintops.incidents SET status = 'in_progress'
                 WHERE id = %s""", (incident_id,))
         conn.commit()
+    if new_status == "completed":
+        return {"incident_id": incident_id, "status": new_status, "hours_worked": hours, "amount_paid_eur": amount}
     return {"incident_id": incident_id, "status": new_status}

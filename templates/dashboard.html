@@ -136,13 +136,28 @@
           <button class="btn btn-small">▶ Start job</button>
         </form>
         {% endif %}
-        <form method="POST" action="{{ url_for('job_status', incident_id=inc.id) }}"
-              onsubmit="return confirm('Mark job #{{ inc.id }} as completed?');">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="status" value="completed">
-          <button class="btn btn-primary btn-small">✔ Mark completed</button>
-        </form>
       </div>
+      <details class="trip-form complete-form">
+        <summary>✔ Mark completed</summary>
+        <form method="POST" action="{{ url_for('job_status', incident_id=inc.id) }}"
+              onsubmit="return confirmCompletion(this, {{ inc.id }});">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="status" value="completed">
+          <div class="complete-row">
+            <label>Hours worked
+              <input type="number" name="hours_worked" min="0.25" max="24" step="0.25" required inputmode="decimal">
+            </label>
+            <label>Amount paid (€)
+              <input type="number" name="amount_paid_eur" min="0" max="10000" step="0.01" required inputmode="decimal">
+            </label>
+            <button class="btn btn-primary btn-small">Complete job</button>
+          </div>
+          <p class="trip-hint">Your hourly rate on MaintOps is worked out from these figures.</p>
+        </form>
+      </details>
+      {% endif %}
+      {% if inc.status == 'completed' and inc.hours_worked %}
+      <p class="job-billing">⏱ {{ '%g' % inc.hours_worked }} h · 💶 €{{ '%.2f' % inc.amount_paid_eur }}</p>
       {% endif %}
     </div>
     {% endfor %}
@@ -191,6 +206,9 @@
         <span class="trip-note">(estimate{% if trip.estimated %}, rough{% endif %})</span>
       </p>
       {% endif %}
+      {% if inc.status == 'completed' and inc.hours_worked %}
+      <p class="job-billing">⏱ {{ '%g' % inc.hours_worked }} h · 💶 €{{ '%.2f' % inc.amount_paid_eur }}</p>
+      {% endif %}
       {% if inc.status == 'completed' and not inc.rating %}
       <form class="dash-feedback-form" method="POST" action="{{ url_for('incident_feedback', incident_id=inc.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -231,6 +249,14 @@
 {% block scripts %}
 {% if current_user.is_handyman %}
 <script>
+  // Completing a job is final: repeat the figures and the hourly rate they imply before saving
+  function confirmCompletion(form, id) {
+    const hours = parseFloat(form.hours_worked.value), amount = parseFloat(form.amount_paid_eur.value);
+    if (!(hours > 0) || !(amount >= 0)) return true;          // the browser and the server report the error
+    return confirm('Complete job #' + id + ': ' + hours + ' h worked, €' + amount.toFixed(2) + ' paid (€'
+                   + (amount / hours).toFixed(2) + ' per hour)?');
+  }
+
   (function() {
     const form = document.getElementById('insights-form');
     const input = document.getElementById('insights-q');

@@ -44,6 +44,7 @@ SUMMARY_MODEL = "databricks-claude-haiku-4-5"
 SUMMARY_MIN_REVIEWS = 3
 SUMMARY_REFRESH_MINUTES = 10      # the live stream refreshes a handyman's summary at most this often
 RECENT_REVIEWS = 20               # sentiment and summaries look at each handyman's latest reviews
+RATE_RECENT_JOBS = 50             # the hourly rate is worked out from each handyman's latest billed jobs
 
 SPECIALISATIONS = ["plumbing", "electrical", "heating_hvac", "carpentry", "painting",
                    "roofing", "flooring", "appliance_repair", "locksmith", "general_maintenance"]
@@ -53,7 +54,8 @@ STATUSES = ["open", "recommended", "assigned", "in_progress", "completed", "canc
 # Incident columns in Lakebase order; silver adds _source and _processed_at
 INCIDENT_COLUMNS = ["id", "reported_by_user_id", "handyman_user_id", "description", "incident_type", "urgency",
                     "recommended_handyman_ids", "agent_reasoning", "distance_km", "travel_time_minutes",
-                    "status", "rating", "feedback", "created_at", "assigned_at", "completed_at", "updated_at"]
+                    "status", "rating", "feedback", "created_at", "assigned_at", "completed_at", "updated_at",
+                    "hours_worked", "amount_paid_eur"]
 TIMESTAMP_COLUMNS = ["created_at", "assigned_at", "completed_at", "updated_at"]
 
 # ─────────────────────────────────────────────────────────────
@@ -69,10 +71,16 @@ def ensure_tables(spark: SparkSession) -> None:
           incident_type STRING, urgency STRING, recommended_handyman_ids ARRAY<BIGINT>, agent_reasoning STRING,
           distance_km DECIMAL(10,2), travel_time_minutes DECIMAL(10,2), status STRING, rating INT, feedback STRING,
           created_at TIMESTAMP, assigned_at TIMESTAMP, completed_at TIMESTAMP, updated_at TIMESTAMP,
+          hours_worked DECIMAL(5,2), amount_paid_eur DECIMAL(10,2),
           _source STRING COMMENT 'batch_export | lakebase_cdf',
           _processed_at TIMESTAMP
         ) CLUSTER BY (handyman_user_id, incident_type)
         COMMENT 'Validated, deduplicated incidents: historical export + live Lakebase changes'""")
+    # Tables created before the billing columns existed (migration 005) get them; MERGE ... SET * needs them
+    have = set(spark.table(T_SILVER).columns)
+    missing = [c for c in ("hours_worked DECIMAL(5,2)", "amount_paid_eur DECIMAL(10,2)") if c.split()[0] not in have]
+    if missing:
+        spark.sql(f"ALTER TABLE {T_SILVER} ADD COLUMNS ({', '.join(missing)})")
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {T_QUARANTINE} (
           id STRING, reasons ARRAY<STRING>, record STRING, _source STRING, _source_file STRING,
@@ -167,6 +175,10 @@ def clean_incidents(df: DataFrame, source: str) -> tuple[DataFrame, DataFrame]:
         F.lower(s("status")).alias("status"),
         _try_cast("rating", "INT").alias("rating"),
         F.nullif(s("feedback"), F.lit("")).alias("feedback"),
+        *[_try_cast(c, t).alias(c) if c in df.columns else F.lit(None).cast(t).alias(c)
+          for c, t in (("hours_worked", "DECIMAL(5,2)"), ("amount_paid_eur", "DECIMAL(10,2)"))],
+        *[s(c).alias(f"_raw_{c}") if c in df.columns else F.lit(None).cast("string").alias(f"_raw_{c}")
+          for c in ("hours_worked", "amount_paid_eur")],
         *[F.expr(f"try_to_timestamp(trim(cast({c} AS STRING)))").alias(c) for c in TIMESTAMP_COLUMNS],
         *[s(c).alias(f"_raw_{c}") for c in TIMESTAMP_COLUMNS],
         F.to_json(F.struct(*[F.col(c) for c in df.columns if not c.startswith("_")])).alias("_record"),
@@ -193,6 +205,14 @@ def clean_incidents(df: DataFrame, source: str) -> tuple[DataFrame, DataFrame]:
                                        (c("status") != "completed")),
         ("handyman_missing", c("status").isin("assigned", "in_progress", "completed") &
                              c("handyman_user_id").isNull()),
+        # Billing: same rules as chk_incident_billing in Lakebase (both or neither, completed jobs only)
+        ("bad_billing_value", (c("_raw_hours_worked").isNotNull() & c("hours_worked").isNull()) |
+                              (c("_raw_amount_paid_eur").isNotNull() & c("amount_paid_eur").isNull())),
+        ("invalid_hours", (c("hours_worked") <= 0) | (c("hours_worked") > 24)),
+        ("invalid_amount", c("amount_paid_eur") < 0),
+        ("billing_incomplete", c("hours_worked").isNull() != c("amount_paid_eur").isNull()),
+        ("billing_on_unfinished_job", (c("hours_worked").isNotNull() | c("amount_paid_eur").isNotNull()) &
+                                      (c("status") != "completed")),
     ]
     reasons = F.filter(F.array(*[F.when(cond, F.lit(code)) for code, cond in rules]), lambda x: x.isNotNull())
     checked = typed.withColumn("_reasons", reasons)
@@ -240,9 +260,23 @@ def merge_into_silver(spark: SparkSession, valid: DataFrame) -> None:
 
 
 def compute_performance(silver: DataFrame) -> DataFrame:
-    """Scorecard per (handyman, incident_type) plus an overall row with incident_type = 'all'."""
+    """Scorecard per (handyman, incident_type) plus an overall row with incident_type = 'all'.
+
+    hourly_rate = amount paid / hours worked over the latest RATE_RECENT_JOBS billed jobs (of that type, or
+    overall), so it follows the handyman's current prices and long jobs weigh more than short ones.
+    """
     hours = (F.unix_timestamp("completed_at") - F.unix_timestamp("assigned_at")) / 3600
     base = silver.where(F.col("handyman_user_id").isNotNull() & F.col("incident_type").isNotNull())
+    billed = F.col("hours_worked").isNotNull() & F.col("amount_paid_eur").isNotNull()
+    newest = [F.col("completed_at").desc_nulls_last(), F.col("id").desc()]
+    rank_all = F.row_number().over(Window.partitionBy("handyman_user_id", billed).orderBy(*newest))
+    rank_type = F.row_number().over(Window.partitionBy("handyman_user_id", "incident_type", billed).orderBy(*newest))
+    base = (base.withColumn("_recent_all", billed & (rank_all <= RATE_RECENT_JOBS))
+                .withColumn("_recent_type", billed & (rank_type <= RATE_RECENT_JOBS)))
+
+    def recent_sum(col, which):
+        return F.sum(F.when(F.col(which), F.col(col)))
+
     return (base.rollup("handyman_user_id", "incident_type")
             .agg(F.count_if(F.col("status") == "completed").alias("jobs_completed"),
                  F.count_if(F.col("status") == "cancelled").alias("jobs_cancelled"),
@@ -253,8 +287,17 @@ def compute_performance(silver: DataFrame) -> DataFrame:
                  F.avg(F.when(F.col("status") == "completed", hours)).alias("_avg_hours"),
                  F.avg("travel_time_minutes").alias("_avg_travel"),
                  F.max("completed_at").alias("last_job_at"),
+                 F.count_if(billed).alias("billed_jobs"),
+                 F.sum("hours_worked").alias("_hours_billed"),
+                 F.sum("amount_paid_eur").alias("_amount_billed"),
+                 recent_sum("hours_worked", "_recent_all").alias("_h_all"),
+                 recent_sum("amount_paid_eur", "_recent_all").alias("_a_all"),
+                 recent_sum("hours_worked", "_recent_type").alias("_h_type"),
+                 recent_sum("amount_paid_eur", "_recent_type").alias("_a_type"),
                  F.grouping("incident_type").alias("_is_total"))
             .where(F.col("handyman_user_id").isNotNull())
+            .withColumn("_rate", F.when(F.col("_is_total") == 1, F.col("_a_all") / F.nullif(F.col("_h_all"), F.lit(0)))
+                                  .otherwise(F.col("_a_type") / F.nullif(F.col("_h_type"), F.lit(0))))
             .select("handyman_user_id",
                     F.when(F.col("_is_total") == 1, "all").otherwise(F.col("incident_type")).alias("incident_type"),
                     "jobs_completed", "jobs_cancelled", "jobs_active", "rated_jobs", "successful_jobs",
@@ -264,6 +307,10 @@ def compute_performance(silver: DataFrame) -> DataFrame:
                     F.round("_avg_hours", 2).cast("decimal(10,2)").alias("avg_resolution_hours"),
                     F.round("_avg_travel", 2).cast("decimal(10,2)").alias("avg_travel_minutes"),
                     "last_job_at",
+                    "billed_jobs",
+                    F.coalesce(F.col("_hours_billed"), F.lit(0)).cast("decimal(12,2)").alias("hours_billed"),
+                    F.coalesce(F.col("_amount_billed"), F.lit(0)).cast("decimal(14,2)").alias("amount_billed"),
+                    F.round("_rate", 2).cast("decimal(10,2)").alias("hourly_rate"),
                     F.current_timestamp().alias("computed_at")))
 
 
@@ -391,7 +438,8 @@ def merge_feedback(spark: SparkSession, fb: DataFrame, stage_table: str = "_stag
 # ─────────────────────────────────────────────────────────────
 PERFORMANCE_COLUMNS = ["handyman_user_id", "incident_type", "jobs_completed", "jobs_cancelled", "jobs_active",
                        "rated_jobs", "successful_jobs", "success_rate", "avg_rating", "avg_resolution_hours",
-                       "avg_travel_minutes", "last_job_at", "computed_at"]
+                       "avg_travel_minutes", "last_job_at", "billed_jobs", "hours_billed", "amount_billed",
+                       "hourly_rate", "computed_at"]
 FEEDBACK_COLUMNS = ["handyman_user_id", "review_count", "recent_review_count", "positive_share", "negative_share",
                     "sentiment_score", "review_summary", "summary_updated_at", "last_review_at", "computed_at"]
 
@@ -424,15 +472,18 @@ def upsert_lakebase(pg_url: str, data, table: str, keys: list[str], cols: list[s
             SELECT {col_list} FROM _stage
             ON CONFLICT ({key_list}) DO UPDATE SET {updates}""")
         if table == "handyman_performance":
-            # Keep the headline numbers on handyman_details consistent with the scorecards
+            # Keep the headline numbers on handyman_details consistent with the scorecards; avg_price (€/h)
+            # follows the billed jobs and stays as it is for a handyman without any yet
             cur.execute("""
                 UPDATE maintops.handyman_details d
                 SET completed_cases = s.jobs_completed,
                     rating_count    = s.rated_jobs,
-                    rating_avg      = COALESCE(s.avg_rating, 0)
+                    rating_avg      = COALESCE(s.avg_rating, 0),
+                    avg_price       = COALESCE(s.hourly_rate, d.avg_price)
                 FROM _stage s
                 WHERE s.incident_type = 'all' AND s.handyman_user_id = d.user_id
-                  AND (d.completed_cases, d.rating_count, d.rating_avg)
-                      IS DISTINCT FROM (s.jobs_completed, s.rated_jobs, COALESCE(s.avg_rating, 0))""")
+                  AND (d.completed_cases, d.rating_count, d.rating_avg, d.avg_price)
+                      IS DISTINCT FROM (s.jobs_completed, s.rated_jobs, COALESCE(s.avg_rating, 0),
+                                        COALESCE(s.hourly_rate, d.avg_price))""")
         conn.commit()
     return n
