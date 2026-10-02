@@ -63,11 +63,10 @@ def main(dry_run: bool) -> None:
 
     with psycopg.connect(_owner_conninfo(app_url), connect_timeout=15) as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS maintops.schema_migrations ("
-                " name text PRIMARY KEY,"
-                " applied_at timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL)"
-            )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS maintops.schema_migrations (
+                    name text PRIMARY KEY,
+                    applied_at timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL)""")
             cur.execute("SELECT name FROM maintops.schema_migrations")
             applied = {row[0] for row in cur.fetchall()}
 
@@ -75,7 +74,9 @@ def main(dry_run: bool) -> None:
             for path in pending:
                 print(f"applying {path.name}")
                 cur.execute(path.read_text())
-                cur.execute("INSERT INTO maintops.schema_migrations (name) VALUES (%s)", (path.name,))
+                cur.execute("""
+                    INSERT INTO maintops.schema_migrations (name)
+                    VALUES (%s)""", (path.name,))
 
             # The app role reads and writes rows but never changes the schema
             role = sql.Identifier(app_role)

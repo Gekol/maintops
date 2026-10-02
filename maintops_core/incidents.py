@@ -43,8 +43,10 @@ def _incident_dict(row) -> dict:
 def get_incident(user_id: int, incident_id: int) -> dict:
     """An incident the user reported or is assigned to (anything else looks like 'not found')."""
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT {_INCIDENT_COLS}, reported_by_user_id FROM maintops.incidents "
-                    "WHERE id = %s AND (reported_by_user_id = %s OR handyman_user_id = %s)",
+        cur.execute(f"""
+            SELECT {_INCIDENT_COLS}, reported_by_user_id
+            FROM maintops.incidents
+            WHERE id = %s AND (reported_by_user_id = %s OR handyman_user_id = %s)""",
                     (incident_id, user_id, user_id))
         row = cur.fetchone()
     if row is None:
@@ -56,8 +58,10 @@ def get_incident(user_id: int, incident_id: int) -> dict:
 
 def list_client_incidents(client_id: int, limit: int = 10) -> list[dict]:
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT {_INCIDENT_COLS} FROM maintops.incidents WHERE reported_by_user_id = %s "
-                    "ORDER BY created_at DESC LIMIT %s", (client_id, limit))
+        cur.execute(f"""
+            SELECT {_INCIDENT_COLS} FROM maintops.incidents
+            WHERE reported_by_user_id = %s
+            ORDER BY created_at DESC LIMIT %s""", (client_id, limit))
         return [_incident_dict(r) for r in cur.fetchall()]
 
 
@@ -76,11 +80,13 @@ def list_handyman_jobs(handyman_id: int, limit: int = 20) -> list[dict]:
 def get_handyman_reviews(handyman_id: int, limit: int = 10) -> dict:
     """Recent ratings/feedback plus the pipeline's review summary for a handyman."""
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT rating, feedback, completed_at FROM maintops.incidents
+        cur.execute("""
+                       SELECT rating, feedback, completed_at FROM maintops.incidents
                        WHERE handyman_user_id = %s AND rating IS NOT NULL
                        ORDER BY completed_at DESC LIMIT %s""", (handyman_id, limit))
         reviews = [{"rating": r[0], "feedback": r[1], "completed_at": r[2]} for r in cur.fetchall()]
-        cur.execute("""SELECT d.rating_avg, d.rating_count, f.review_summary, f.sentiment_score
+        cur.execute("""
+                       SELECT d.rating_avg, d.rating_count, f.review_summary, f.sentiment_score
                        FROM maintops.handyman_details d
                        LEFT JOIN maintops.handyman_feedback f ON f.handyman_user_id = d.user_id
                        WHERE d.user_id = %s""", (handyman_id,))
@@ -93,9 +99,10 @@ def get_handyman_reviews(handyman_id: int, limit: int = 10) -> dict:
 
 
 # Whitelisted sort orders for search_handyman_reviews (never built from input)
+_WRITTEN_FIRST = "(feedback IS NULL), completed_at DESC"         # written reviews first on ties
 REVIEW_ORDERS = {
-    "worst": "rating ASC, (feedback IS NULL), completed_at DESC",    # written reviews first on ties
-    "best": "rating DESC, (feedback IS NULL), completed_at DESC",
+    "worst": f"rating ASC, {_WRITTEN_FIRST}",
+    "best": f"rating DESC, {_WRITTEN_FIRST}",
     "recent": "completed_at DESC",
 }
 MAX_REVIEW_RESULTS = 20
@@ -155,16 +162,18 @@ def compare_job_types(by_type: list[dict]) -> dict:
     eligible = [t for t in by_type
                 if t["incident_type"] != "all" and t["rated_jobs"] >= MIN_RATED_FOR_COMPARISON
                 and t["success_rate_percent"] is not None]
+    n = MIN_RATED_FOR_COMPARISON
     if len(eligible) < 2:
         return {"strongest": None, "weakest": None, "compared_types": len(eligible),
-                "note": f"Fewer than two job types have {MIN_RATED_FOR_COMPARISON}+ rated jobs, "
+                "note": f"Fewer than two job types have {n}+ rated jobs, "
                         "so there is not enough data to compare job types."}
     ranked = sorted(eligible, key=lambda t: (t["success_rate_percent"], -t["rated_jobs"]))
     pick = lambda t: {k: t[k] for k in ("incident_type", "success_rate_percent", "avg_rating", "rated_jobs")}  # noqa: E731
     gap = ranked[-1]["success_rate_percent"] - ranked[0]["success_rate_percent"]
-    note = f"Only job types with {MIN_RATED_FOR_COMPARISON}+ rated jobs are compared."
+    note = f"Only job types with {n}+ rated jobs are compared."
     if gap < CLEAR_GAP_POINTS:
-        note += f" The gap is under {CLEAR_GAP_POINTS} points, so the job types perform about the same."
+        points = CLEAR_GAP_POINTS
+        note += f" The gap is under {points} points, so the job types perform about the same."
     return {"strongest": pick(ranked[-1]), "weakest": pick(ranked[0]), "compared_types": len(eligible),
             "gap_points": gap, "clear_difference": gap >= CLEAR_GAP_POINTS, "note": note}
 
@@ -212,7 +221,9 @@ def user_names(user_ids) -> dict:
     if not ids:
         return {}
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, first_name || ' ' || last_name FROM maintops.users WHERE id = ANY(%s)", (ids,))
+        cur.execute("""
+            SELECT id, first_name || ' ' || last_name
+            FROM maintops.users WHERE id = ANY(%s)""", (ids,))
         return dict(cur.fetchall())
 
 
@@ -231,12 +242,16 @@ def create_incident(client_id: int, description: str, incident_type: str, urgenc
     if not 5 <= len(description) <= 2000:
         raise ServiceError("The problem description must be between 5 and 2000 characters.")
     if incident_type not in SPECIALISATIONS:
-        raise ServiceError(f"Unknown incident type '{incident_type}'. Use one of: {', '.join(SPECIALISATIONS)}.")
+        options = ", ".join(SPECIALISATIONS)
+        raise ServiceError(f"Unknown incident type '{incident_type}'. Use one of: {options}.")
     if urgency not in URGENCIES:
-        raise ServiceError(f"Unknown urgency '{urgency}'. Use one of: {', '.join(URGENCIES)}.")
+        options = ", ".join(URGENCIES)
+        raise ServiceError(f"Unknown urgency '{urgency}'. Use one of: {options}.")
 
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT is_handyman, is_active FROM maintops.users WHERE id = %s", (client_id,))
+        cur.execute("""
+            SELECT is_handyman, is_active
+            FROM maintops.users WHERE id = %s""", (client_id,))
         row = cur.fetchone()
         if row is None or not row[1]:
             raise ServiceError("Your account is not active.")
@@ -276,7 +291,8 @@ def assign_handyman(client_id: int, incident_id: int, handyman_id: int) -> dict:
         if handyman_id not in (recommended or []):
             raise ServiceError("You can only choose one of the handymen recommended for this incident.")
 
-        cur.execute("""SELECT count(*) FROM maintops.incidents
+        cur.execute("""
+                       SELECT count(*) FROM maintops.incidents
                        WHERE handyman_user_id = %s AND status IN ('assigned', 'in_progress')""", (handyman_id,))
         if cur.fetchone()[0] >= MAX_ACTIVE_JOBS:
             raise ServiceError("This handyman has just become fully booked. Please choose another candidate.")
@@ -303,8 +319,9 @@ def cancel_incident(client_id: int, incident_id: int) -> dict:
                          AND status IN ('open', 'recommended', 'assigned')
                        RETURNING id""", (incident_id, client_id))
         if cur.fetchone() is None:
-            cur.execute("SELECT status FROM maintops.incidents WHERE id = %s AND reported_by_user_id = %s",
-                        (incident_id, client_id))
+            cur.execute("""
+                SELECT status FROM maintops.incidents
+                WHERE id = %s AND reported_by_user_id = %s""", (incident_id, client_id))
             row = cur.fetchone()
             if row is None:
                 raise ServiceError(f"Incident {incident_id} not found.")
@@ -322,7 +339,8 @@ def submit_feedback(client_id: int, incident_id: int, rating: int, feedback: str
     if feedback and len(feedback) > 2000:
         raise ServiceError("Feedback can be at most 2000 characters.")
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT status, rating, handyman_user_id FROM maintops.incidents
+        cur.execute("""
+                       SELECT status, rating, handyman_user_id FROM maintops.incidents
                        WHERE id = %s AND reported_by_user_id = %s FOR UPDATE""", (incident_id, client_id))
         row = cur.fetchone()
         if row is None:
@@ -356,11 +374,15 @@ def update_job_status(handyman_id: int, incident_id: int, new_status: str) -> di
         if row[0] not in allowed[new_status]:
             raise ServiceError(f"Job {incident_id} is '{row[0]}' and cannot move to '{new_status}'.")
         if new_status == "completed":
-            cur.execute("""UPDATE maintops.incidents SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+            cur.execute("""
+                           UPDATE maintops.incidents
+                           SET status = 'completed', completed_at = CURRENT_TIMESTAMP
                            WHERE id = %s""", (incident_id,))
             cur.execute("UPDATE maintops.handyman_details SET completed_cases = completed_cases + 1 "
                         "WHERE user_id = %s", (handyman_id,))
         else:
-            cur.execute("UPDATE maintops.incidents SET status = 'in_progress' WHERE id = %s", (incident_id,))
+            cur.execute("""
+                UPDATE maintops.incidents SET status = 'in_progress'
+                WHERE id = %s""", (incident_id,))
         conn.commit()
     return {"incident_id": incident_id, "status": new_status}

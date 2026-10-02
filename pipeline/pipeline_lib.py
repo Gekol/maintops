@@ -22,7 +22,7 @@ def fq(table: str) -> str:
     return f"{CATALOG}.{SCHEMA}.{table}"
 
 
-VOLUME_ROOT = f"/Volumes/{CATALOG}/{SCHEMA}/maintops_docs"
+VOLUME_ROOT = "/".join(("/Volumes", CATALOG, SCHEMA, "maintops_docs"))
 RAW_DIR = f"{VOLUME_ROOT}/raw/incidents"
 CHECKPOINT_DIR = f"{VOLUME_ROOT}/_checkpoints"
 CV_DIR = f"{VOLUME_ROOT}/handyman_cvs"
@@ -126,10 +126,18 @@ def log_step(spark: SparkSession, run_id: str, step: str, started: float, rows_i
 
 
 def _parse_pg_array(col):
-    """Postgres array text '{1,2,3}' (how Lakebase CDF delivers arrays) → ARRAY<BIGINT>."""
+    """Parse Postgres array text into ARRAY<BIGINT>.
+
+    Lakebase CDF delivers arrays as text, e.g. {1,2,3}.
+    """
     inner = F.regexp_replace(col, r"[{}\s]", "")
     return F.when(col.isNull(), None).when(inner == "", F.array().cast("array<bigint>")) \
             .otherwise(F.split(inner, ",").cast("array<bigint>"))
+
+
+def _try_cast(col: str, sql_type: str):
+    """The column as text, trimmed, cast to sql_type; NULL when it does not parse."""
+    return F.expr(f"try_cast(trim(cast({col} AS STRING))" f" AS {sql_type})")
 
 
 def clean_incidents(df: DataFrame, source: str) -> tuple[DataFrame, DataFrame]:
@@ -144,18 +152,18 @@ def clean_incidents(df: DataFrame, source: str) -> tuple[DataFrame, DataFrame]:
         else ids.cast("array<bigint>")
 
     typed = df.select(
-        F.expr("try_cast(trim(cast(id AS STRING)) AS BIGINT)").alias("id"),
-        F.expr("try_cast(trim(cast(reported_by_user_id AS STRING)) AS BIGINT)").alias("reported_by_user_id"),
-        F.expr("try_cast(trim(cast(handyman_user_id AS STRING)) AS BIGINT)").alias("handyman_user_id"),
+        _try_cast("id", "BIGINT").alias("id"),
+        _try_cast("reported_by_user_id", "BIGINT").alias("reported_by_user_id"),
+        _try_cast("handyman_user_id", "BIGINT").alias("handyman_user_id"),
         F.regexp_replace(s("description"), r"\s+", " ").alias("description"),
         F.lower(s("incident_type")).alias("incident_type"),
         F.lower(s("urgency")).alias("urgency"),
         rec_ids.alias("recommended_handyman_ids"),
         s("agent_reasoning").alias("agent_reasoning"),
-        F.expr("try_cast(trim(cast(distance_km AS STRING)) AS DECIMAL(10,2))").alias("distance_km"),
-        F.expr("try_cast(trim(cast(travel_time_minutes AS STRING)) AS DECIMAL(10,2))").alias("travel_time_minutes"),
+        _try_cast("distance_km", "DECIMAL(10,2)").alias("distance_km"),
+        _try_cast("travel_time_minutes", "DECIMAL(10,2)").alias("travel_time_minutes"),
         F.lower(s("status")).alias("status"),
-        F.expr("try_cast(trim(cast(rating AS STRING)) AS INT)").alias("rating"),
+        _try_cast("rating", "INT").alias("rating"),
         F.nullif(s("feedback"), F.lit("")).alias("feedback"),
         *[F.expr(f"try_to_timestamp(trim(cast({c} AS STRING)))").alias(c) for c in TIMESTAMP_COLUMNS],
         *[s(c).alias(f"_raw_{c}") for c in TIMESTAMP_COLUMNS],
@@ -340,8 +348,10 @@ def refresh_summaries(spark: SparkSession, features: DataFrame, throttle: bool, 
                          (F.col("_prev_summary_at") < F.current_timestamp() - F.expr(
                              f"INTERVAL {SUMMARY_REFRESH_MINUTES} MINUTES")))
     f = f.withColumn("_needs", needs if generate else F.lit(False))
-    todo = f.where("_needs").withColumn("_ai", F.expr(
-        f"ai_query('{SUMMARY_MODEL}', concat('{SUMMARY_PROMPT}', _recent_reviews), failOnError => false)"))
+    todo = f.where("_needs").withColumn("_ai", F.expr(f"""
+        ai_query('{SUMMARY_MODEL}',
+                 concat('{SUMMARY_PROMPT}', _recent_reviews),
+                 failOnError => false)"""))
     done = todo.select("handyman_user_id", plain_text(F.col("_ai.result")).alias("_new_summary"))
     return (f.join(done, "handyman_user_id", "left")
             .withColumn("review_summary", F.coalesce("_new_summary", "_prev_summary"))
@@ -385,8 +395,9 @@ FEEDBACK_COLUMNS = ["handyman_user_id", "review_count", "recent_review_count", "
 
 
 def upsert_lakebase(pg_url: str, data, table: str, keys: list[str], cols: list[str]) -> int:
-    """COPY rows into a temp table, then INSERT ... ON CONFLICT DO UPDATE into maintops.<table>.
+    """Upsert rows into maintops.<table>.
 
+    COPY into a temp table, then INSERT ... ON CONFLICT DO UPDATE.
     data is a DataFrame (streamed from the cluster) or a list of Rows already on the driver
     (the live stream's fast path, which pushes scorecards before writing anything to Delta).
     """
@@ -397,14 +408,19 @@ def upsert_lakebase(pg_url: str, data, table: str, keys: list[str], cols: list[s
     updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in keys)
     n = 0
     with psycopg.connect(pg_url, connect_timeout=30) as conn, conn.cursor() as cur:
-        cur.execute(f"CREATE TEMP TABLE _stage (LIKE maintops.{table} INCLUDING DEFAULTS) ON COMMIT DROP")
-        with cur.copy(f"COPY _stage ({', '.join(cols)}) FROM STDIN") as cp:
+        col_list, key_list = ", ".join(cols), ", ".join(keys)
+        cur.execute(f"""
+            CREATE TEMP TABLE _stage (LIKE maintops.{table} INCLUDING DEFAULTS)
+            ON COMMIT DROP""")
+        with cur.copy(f"""
+            COPY _stage ({col_list}) FROM STDIN""") as cp:
             for row in rows:
                 cp.write_row(tuple(row))
                 n += 1
-        cur.execute(f"INSERT INTO maintops.{table} ({', '.join(cols)}) "
-                    f"SELECT {', '.join(cols)} FROM _stage "
-                    f"ON CONFLICT ({', '.join(keys)}) DO UPDATE SET {updates}")
+        cur.execute(f"""
+            INSERT INTO maintops.{table} ({col_list})
+            SELECT {col_list} FROM _stage
+            ON CONFLICT ({key_list}) DO UPDATE SET {updates}""")
         if table == "handyman_performance":
             # Keep the headline numbers on handyman_details consistent with the scorecards
             cur.execute("""

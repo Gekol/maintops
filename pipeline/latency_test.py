@@ -35,7 +35,8 @@ def _pg_url() -> str:
 def main(n: int) -> None:
     rng = random.Random(42)
     with psycopg.connect(_pg_url()) as conn, conn.cursor() as cur:
-        cur.execute("""SELECT id, handyman_user_id FROM maintops.incidents
+        cur.execute("""
+                       SELECT id, handyman_user_id FROM maintops.incidents
                        WHERE status = 'completed' AND rating IS NULL
                        ORDER BY id LIMIT %s""", (n,))
         rows = cur.fetchall()
@@ -51,11 +52,12 @@ def main(n: int) -> None:
         conn.commit()
         committed = time.time()
         commit_ts = cur.fetchone()[0]
-        print(f"committed {len(rows)} reviews for {len(handymen)} handymen at {commit_ts:%H:%M:%S}")
+        print(f"committed {len(rows)} reviews for {len(handymen)} handymen", f"at {commit_ts:%H:%M:%S}")
 
         # Wait until every affected handyman's overall scorecard was recomputed after the commit
         while True:
-            cur.execute("""SELECT count(*) FROM maintops.handyman_performance
+            cur.execute("""
+                           SELECT count(*) FROM maintops.handyman_performance
                            WHERE incident_type = 'all' AND handyman_user_id = ANY(%s) AND updated_at >= %s""",
                         (list(handymen), commit_ts))
             done = cur.fetchone()[0]
