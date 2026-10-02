@@ -38,7 +38,10 @@ def log_event(event_type: str, name: str, success: bool, *, user_id: int | None 
 
     try:
         try:
-            insert(user_id, incident_id, details)
+            try:
+                insert(user_id, incident_id, details)
+            except psycopg.OperationalError:     # a dropped connection: the pool hands out a fresh one
+                insert(user_id, incident_id, details)
         except psycopg.errors.ForeignKeyViolation:
             # e.g. a failed action on an incident that does not exist: keep the event, move the ids to details
             insert(None, None, {**(details or {}), "user_id": user_id, "incident_id": incident_id})

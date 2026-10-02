@@ -21,7 +21,8 @@ def _get_pool() -> ConnectionPool:
             conninfo=url,
             min_size=1,
             max_size=10,
-            max_idle=600,                           # close idle connections after 10 min
+            max_idle=60,                            # Lakebase drops idle connections ("SSL connection has been
+            max_lifetime=300,                       # closed unexpectedly"): recycle them before it does
             check=ConnectionPool.check_connection,  # pre-ping on checkout
             open=True,
         )
