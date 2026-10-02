@@ -40,8 +40,8 @@ pipeline/               Spark pipeline (logic in pipeline_lib.py)
   20_live_stream        CDF → scorecards in Lakebase (< 1 min)
   latency_test.py       burst latency test
   analytics/            Lakeflow Declarative Pipeline (metrics)
-notebooks/              RAG: 01 schema → 02 parse FAQ → 03 chunk + index → 05 retrieval eval; 06 keep-alive
-data_synthesis/         synthetic data (01–06) and Lakebase load (07)
+rag/                    FAQ retrieval (RAG): 01 schema → 02 parse FAQ → 03 chunk + index → 05 retrieval eval; 06 keep-alive
+data_synthesis/         synthetic data (01–06), Lakebase load (07), billing backfill (08)
 sqls/                   base DDL + migrations/ (applied by migrate.py)
 tests/                  unit tests (pytest)
 pyproject.toml          tool config: ruff (lint) and pytest
@@ -145,6 +145,8 @@ Run the notebooks in order on Databricks:
 | 04 | `04_generate_cv_pdfs` | One PDF CV per handyman in the Unity Catalog Volume |
 | 05 | `05_generate_incidents` | `synth_incidents` Delta table (columns of `maintops.incidents`) with Change Data Feed; handyman stats come from the Spark pipeline |
 | 06 | `06_validate` | Read-only PASS/FAIL sanity checks |
+| 07 | `07_load_lakebase` | Loads users, handyman details and the recent incidents (~45k) into Lakebase |
+| 08 | `08_backfill_billing` | Hours worked and amount paid on existing completed incidents (Delta and Lakebase); a no-op after a fresh 05 + 07 |
 
 Notes:
 - Emails use reserved `example.*` domains, and all synthetic users share the demo password defined in `00_config` (Argon2-hashed). Do not reuse it anywhere real.
@@ -302,7 +304,7 @@ Parsing and extraction are separate steps: parsing does not produce the final pr
 
 ## RAG assistant for visitors
 
-Unregistered visitors can ask Manny questions without an account. The informational documents are parsed, chunked and indexed for vector retrieval (`notebooks/02`–`03`), and Manny (`agent/manny.py`) answers from them with `search_faq`. It is informational only and needs no user record.
+Unregistered visitors can ask Manny questions without an account. The informational documents are parsed, chunked and indexed for vector retrieval (`rag/02`–`03`), and Manny (`agent/manny.py`) answers from them with `search_faq`. It is informational only and needs no user record.
 
 ## Feedback loop
 

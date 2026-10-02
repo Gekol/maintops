@@ -1,4 +1,4 @@
-# Local dependencies for running the notebooks in notebooks/ and data_synthesis/ outside Databricks.
+# Local dependencies for running the notebooks in rag/, data_synthesis/ and pipeline/ outside Databricks.
 # Python 3.12 is required (serverless compute for Databricks Connect).
 # Do NOT install pyspark alongside databricks-connect — they conflict.
 databricks-connect>=17.0,<18

@@ -44,22 +44,22 @@ resources:
       tasks:
         - task_key: setup_schema
           notebook_task:
-            notebook_path: ./notebooks/01_setup_schema.ipynb
+            notebook_path: ./rag/01_setup_schema.ipynb
         - task_key: parse_faq
           depends_on:
             - task_key: setup_schema
           notebook_task:
-            notebook_path: ./notebooks/02_parse_faq.ipynb
+            notebook_path: ./rag/02_parse_faq.ipynb
         - task_key: chunk_and_index_faq
           depends_on:
             - task_key: parse_faq
           notebook_task:
-            notebook_path: ./notebooks/03_chunk_faq.ipynb
+            notebook_path: ./rag/03_chunk_faq.ipynb
         - task_key: eval_retrieval
           depends_on:
             - task_key: chunk_and_index_faq
           notebook_task:
-            notebook_path: ./notebooks/05_eval_retrieval.ipynb
+            notebook_path: ./rag/05_eval_retrieval.ipynb
 
     # Synthetic data: real addresses → 100k clients → 10k handymen → 10k CV PDFs → 1M incidents → checks.
     # Every notebook overwrites its own output, so the job can be re-run from scratch.
@@ -187,6 +187,6 @@ resources:
       tasks:
         - task_key: keep_alive
           notebook_task:
-            notebook_path: ./notebooks/06_keep_vs_alive.ipynb
+            notebook_path: ./rag/06_keep_vs_alive.ipynb
             base_parameters:
               rag_job_id: ${resources.jobs.maintops_rag.id}

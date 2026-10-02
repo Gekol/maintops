@@ -1,6 +1,6 @@
 """FAQ retrieval over the faq_index vector index (Manny's search_faq tool).
 
-The index is built by the maintops_rag job (notebooks 02, 03). Auth comes from the
+The index is built by the maintops_rag job (rag/02, rag/03). Auth comes from the
 environment: a Databricks profile locally, automatic credentials inside Model Serving.
 """
 
