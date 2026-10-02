@@ -5,8 +5,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "eval"))
 
-from eval_checks import (CONFIRMATION, WRITE_CLAIM, misattributed_figures, numbers_in,  # noqa: E402
-                         prices_without_hourly_unit, skill_claim_errors, travel_mode_errors, ungrounded_numbers, values_in)
+from eval_checks import (  # noqa: E402
+    CONFIRMATION,
+    WRITE_CLAIM,
+    misattributed_figures,
+    numbers_in,
+    prices_without_hourly_unit,
+    skill_claim_errors,
+    travel_mode_errors,
+    ungrounded_numbers,
+    values_in,
+)
 
 CANDIDATES = [
     {"handyman_id": 1, "name": "Sophie Brandt", "matched_skills": ["tile repair", "tile replacement", "floor tiling"],
@@ -109,7 +118,8 @@ def test_another_candidates_figure_is_caught():
              "a 96% success rate across "
              "464 electrical jobs, "
              "a 7-minute drive away.")
-    assert misattributed_figures(reply, ELECTRICIANS, set()) == ["Milan Kuhne: ['464'] are not this candidate's figures"]
+    expected = ["Milan Kuhne: ['464'] are not this candidate's figures"]
+    assert misattributed_figures(reply, ELECTRICIANS, set()) == expected
     own_figures = "Milan Kuhne: 96% over " "104 jobs, rated 4.51."
     assert misattributed_figures(own_figures, ELECTRICIANS, {4.51}) == []
     assert misattributed_figures("Milan Kuhne is closer than Nina (7 vs 3 minutes).", ELECTRICIANS, set()) == []

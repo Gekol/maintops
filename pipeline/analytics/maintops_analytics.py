@@ -61,10 +61,14 @@ def analytics_incident_changes():
 # ─────────────────────────────────────────────────────────────
 
 
-@dlt.table(name="analytics_agent_requests_hourly", comment="Manny requests per hour and role: volume, latency, tokens, estimated cost")
+@dlt.table(
+    name="analytics_agent_requests_hourly",
+    comment="Manny requests per hour and role: volume, latency, tokens, estimated cost",
+)
 def analytics_agent_requests_hourly():
     return (dlt.read("analytics_events").where("event_type = 'agent_request'")
-            .groupBy(F.date_trunc("hour", "created_at").alias("hour"), F.coalesce("role", F.lit("unknown")).alias("role"))
+            .groupBy(F.date_trunc("hour", "created_at").alias("hour"),
+                     F.coalesce("role", F.lit("unknown")).alias("role"))
             .agg(F.count("*").alias("requests"),
                  F.countDistinct("user_id").alias("distinct_users"),
                  F.round(F.avg("latency_ms")).alias("avg_latency_ms"),
@@ -85,7 +89,10 @@ def analytics_tool_usage():
                  F.max("created_at").alias("last_call_at")))
 
 
-@dlt.table(name="analytics_api_usage_daily", comment="Third-party (Geoapify) API calls per day: volume, failure rate, latency")
+@dlt.table(
+    name="analytics_api_usage_daily",
+    comment="Third-party (Geoapify) API calls per day: volume, failure rate, latency",
+)
 def analytics_api_usage_daily():
     return (dlt.read("analytics_events").where("event_type = 'api_call'")
             .groupBy(F.to_date("created_at").alias("day"), "name")
@@ -95,13 +102,19 @@ def analytics_api_usage_daily():
                  F.percentile_approx("latency_ms", 0.95).alias("p95_latency_ms")))
 
 
-@dlt.table(name="analytics_guardrails_daily", comment="Guardrail decisions per day (injection refusals, emergencies, ungrounded numbers)")
+@dlt.table(
+    name="analytics_guardrails_daily",
+    comment="Guardrail decisions per day (injection refusals, emergencies, ungrounded numbers)",
+)
 def analytics_guardrails_daily():
     return (dlt.read("analytics_events").where("event_type = 'guardrail'")
             .groupBy(F.to_date("created_at").alias("day"), "name").agg(F.count("*").alias("events")))
 
 
-@dlt.table(name="analytics_write_actions", comment="Write actions per user and day, split by channel (agent vs UI buttons)")
+@dlt.table(
+    name="analytics_write_actions",
+    comment="Write actions per user and day, split by channel (agent vs UI buttons)",
+)
 def analytics_write_actions():
     return (dlt.read("analytics_events")
             .where(F.col("event_type").isin("tool_call", "ui_action") & F.col("name").isin(WRITE_ACTIONS))
@@ -117,7 +130,10 @@ def analytics_feature_usage():
             .orderBy(F.desc("uses")))
 
 
-@dlt.table(name="analytics_incident_activity_daily", comment="Incident record creation / update / deletion trends per day and status")
+@dlt.table(
+    name="analytics_incident_activity_daily",
+    comment="Incident record creation / update / deletion trends per day and status",
+)
 def analytics_incident_activity_daily():
     return (dlt.read("analytics_incident_changes")
             .groupBy(F.to_date("changed_at").alias("day"), "change_type", "status")

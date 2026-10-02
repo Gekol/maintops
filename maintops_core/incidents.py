@@ -34,7 +34,7 @@ _INCIDENT_COLS = ("id, description, incident_type, urgency, status, required_ski
 
 def _incident_dict(row) -> dict:
     keys = [c.strip() for c in _INCIDENT_COLS.split(",")]
-    d = dict(zip(keys, row))
+    d = dict(zip(keys, row, strict=True))
     for k in ("distance_km", "travel_time_minutes"):
         d[k] = float(d[k]) if d[k] is not None else None
     return d

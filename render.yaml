@@ -16,8 +16,6 @@ services:
         sync: false  # set manually in Render dashboard
       - key: DATABRICKS_TOKEN
         sync: false  # set manually in Render dashboard (sensitive)
-      - key: LLM_ENDPOINT
-        value: databricks-meta-llama-3-3-70b-instruct
       - key: MANNY_ENDPOINT
         value: maintops-manny     # Model Serving endpoint of the Manny agent
       - key: DATABRICKS_WAREHOUSE_ID

@@ -31,7 +31,7 @@ import uuid
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -40,17 +40,16 @@ sys.path[:0] = [str(HERE), str(HERE.parent)]
 # MLflow otherwise calls predict_fn once as a check before the run: a real conversation outside the fixtures
 os.environ.setdefault("MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION", "true")
 
-import mlflow                                                       # noqa: E402
-import psycopg                                                      # noqa: E402
-from psycopg_pool import PoolTimeout                                # noqa: E402
-from databricks.sdk import WorkspaceClient                          # noqa: E402
-from mlflow.entities import Feedback                                # noqa: E402
-from mlflow.genai.judges import meets_guidelines                    # noqa: E402
-from mlflow.genai.scorers import Safety, scorer                     # noqa: E402
-
-import eval_checks as C                                             # noqa: E402
-import eval_fixtures as F                                           # noqa: E402
-import eval_scenarios as S                                          # noqa: E402
+import eval_checks as C  # noqa: E402
+import eval_fixtures as F  # noqa: E402
+import eval_scenarios as S  # noqa: E402
+import mlflow  # noqa: E402
+import psycopg  # noqa: E402
+from databricks.sdk import WorkspaceClient  # noqa: E402
+from mlflow.entities import Feedback  # noqa: E402
+from mlflow.genai.judges import meets_guidelines  # noqa: E402
+from mlflow.genai.scorers import Safety, scorer  # noqa: E402
+from psycopg_pool import PoolTimeout  # noqa: E402
 
 ENDPOINT = os.environ.get("MANNY_ENDPOINT", "maintops-manny")
 JUDGE_MODEL = os.environ.get("MANNY_JUDGE_MODEL", "databricks:/databricks-claude-sonnet-4-6")
@@ -115,7 +114,8 @@ def _reply_text(body: dict) -> str:
 
 def _allowed_numbers(sc, s: dict, t: dict, history: list[dict]) -> set[float]:
     """Every figure the user is entitled to see right now: their own data, what the tools returned, what they said."""
-    from maintops_core import incidents as inc, rag
+    from maintops_core import incidents as inc
+    from maintops_core import rag
     allowed = {float(MAX_INPUT_CHARS)}
     for m in history:
         if m["role"] == "user":
@@ -128,7 +128,7 @@ def _allowed_numbers(sc, s: dict, t: dict, history: list[dict]) -> set[float]:
         mine = F.incidents_of(uid)
         by_status = Counter(i["status"] for i in mine)
         allowed |= {float(len(mine)), *map(float, by_status.values()),
-                    float(by_status["open"] + by_status["recommended"] + by_status["assigned"] + by_status["in_progress"]),
+                    float(sum(by_status[k] for k in ("open", "recommended", "assigned", "in_progress"))),
                     float(by_status["assigned"] + by_status["in_progress"])}
     if sc.role == "client":
         allowed |= {1.0, 2.0, 3.0}                          # ranks in the recommendation list ("option 3")
@@ -299,7 +299,8 @@ def judge_no_promises(outputs, expectations):
 def judge_clear_failure(outputs, expectations):
     if not expectations["negative"]:
         return None
-    return meets_guidelines(name="judge_clear_failure", model=JUDGE_MODEL, context={"conversation": _transcript(outputs)},
+    return meets_guidelines(name="judge_clear_failure", model=JUDGE_MODEL,
+                            context={"conversation": _transcript(outputs)},
                             guidelines=["The request in this conversation must not or cannot be carried out. Manny's "
                                         "last reply makes clear that it was not done and why (or what is needed "
                                         "instead), without guessing causes and without claiming it happened."])
@@ -354,7 +355,7 @@ def evaluate(backend, repeats: int = 3, only: str | None = None, workers: int = 
             print(f"warning: test data not reset ({type(exc).__name__}: {exc})")
     report = _report(backend.label, repeats, scenarios, runs, result, time.time() - started)
     _print_report(report)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     path = RESULTS_DIR / f"manny_eval_{stamp}.json"
     try:
         RESULTS_DIR.mkdir(exist_ok=True)
@@ -383,7 +384,7 @@ def _report(target, repeats, scenarios, runs, result, seconds) -> dict:
                     failures[(sid, turn_no, r["kind"], r["name"], r["detail"][:300])] += 1
     passed_runs = sum(run["passed"] for run in runs.values())
     return {
-        "target": target, "run_at": datetime.now(timezone.utc).isoformat(), "mlflow_run_id": result.run_id,
+        "target": target, "run_at": datetime.now(UTC).isoformat(), "mlflow_run_id": result.run_id,
         "repeats": repeats, "scenarios": len(scenarios), "runs": len(runs), "passed_runs": passed_runs,
         "checks_total": checks[True] + checks[False], "checks_failed": checks[False],
         "missing_runs": missing, "seconds": round(seconds),

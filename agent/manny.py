@@ -30,8 +30,8 @@ from mlflow.entities import SpanType
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse
 
-from maintops_core import incidents as inc
 from maintops_core import grounding, matching, rag
+from maintops_core import incidents as inc
 from maintops_core.events import log_event
 
 LLM_ENDPOINT = os.environ.get("MANNY_LLM_ENDPOINT", "databricks-claude-sonnet-4-6")
@@ -188,7 +188,7 @@ The user is a logged-in client. When they describe a maintenance problem:
    appears in the handyman's job list — never promise when or how they will get in touch.
 If they refer to an incident or a candidate you cannot see above, call get_my_incidents before saying you don't know.
 After a completed job, you can record their rating (1–5) and review with submit_feedback: first repeat the job,
-rating and review back and ask "Shall I save this?"; only after an explicit yes call it with confirm=true.""",
+rating and review back and ask "Shall I save this?"; only after an explicit yes call it with confirm=true.""",  # noqa: E501
     "handyman": _BASE + """
 The user is a logged-in handyman. Help them see their jobs (get_my_jobs), details, and reviews
 (get_my_reviews), and update job status. Before update_job_status, ask for explicit confirmation and only
@@ -375,7 +375,8 @@ class MannyAgent(ResponsesAgent):
             names = inc.user_names({h for i in items for h in (i["recommended_handyman_ids"] or [])})
             lines = []
             for i in items:
-                line = f"- incident {i['id']} ({i['status']}, {i['incident_type']}, {i['urgency']}): {i['description'][:80]}"
+                line = (f"- incident {i['id']} ({i['status']}, {i['incident_type']}, {i['urgency']}): "
+                        f"{i['description'][:80]}")
                 if i["status"] == "recommended":
                     line += "; recommended in this order: " + ", ".join(
                         f"{n}. {names.get(h, '?')} (handyman_id {h})"
@@ -409,7 +410,8 @@ class MannyAgent(ResponsesAgent):
                 raise inc.ServiceError(f"Missing arguments: {', '.join(missing)}.")
             if name in CONFIRM_REQUIRED and args.get("confirm") is not True:
                 result = {"needs_confirmation": True,
-                          "message": "Ask the user to explicitly confirm this action, then call again with confirm=true."}
+                          "message": "Ask the user to explicitly confirm this action, "
+                                     "then call again with confirm=true."}
             elif name == "submit_feedback" and self._rating_contradicted(args, ctx):
                 self._guardrail(ctx, "confirmation_mismatch", ctx.get("last_user", ""))
                 result = {"needs_confirmation": True,
@@ -425,7 +427,8 @@ class MannyAgent(ResponsesAgent):
         except inc.ServiceError as exc:
             error, result = str(exc), {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — never leak internals to the model or the user
-            error, result = f"{type(exc).__name__}: {exc}", {"error": "Something went wrong on our side. Please try again."}
+            error = f"{type(exc).__name__}: {exc}"
+            result = {"error": "Something went wrong on our side. Please try again."}
         log_event("tool_call", name, error is None, user_id=ctx["user_id"], request_id=ctx["request_id"],
                   incident_id=ctx["incident_id"], error=error, latency_ms=int((time.time() - started) * 1000),
                   details={"args": args, "needs_confirmation": bool(result and result.get("needs_confirmation"))})

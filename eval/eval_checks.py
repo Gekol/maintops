@@ -87,17 +87,20 @@ def ungrounded_numbers(reply: str, allowed: set[float]) -> list[str]:
 # ─────────────────────────────────────────────────────────────
 # Skill-coverage claims about candidates
 # ─────────────────────────────────────────────────────────────
-_ALL_SKILLS = re.compile(r"\ball\s+(?:(?:the|two|three|four|five|\d)\s+)?(?:(?:required|key|needed|listed)\s+)?skills?\b|"
+_ALL_SKILLS = re.compile(r"\ball\s+(?:(?:the|two|three|four|five|\d)\s+)?"
+                         r"(?:(?:required|key|needed|listed)\s+)?skills?\b|"
                          r"\bevery (?:required |key )?skill", re.I)
 # "All three match 2 of 4 skills" / "all candidates" / "each of them" = a statement about every candidate
 _THE_OTHERS = re.compile(r"\bthe other (?:two|candidates|ones)\b|\bthe others\b|\bthe rest\b", re.I)
 _ALL_CANDIDATES = re.compile(r"\ball\s+(?:three|3)\b(?!\s+(?:of\s+\d|(?:(?:required|key|needed|listed)\s+)?skills?\b))|"
-                             r"\ball\s+(?:the\s+)?(?:candidates|handymen|of them)|\beach of them|\bevery candidate", re.I)
+                             r"\ball\s+(?:the\s+)?(?:candidates|handymen|of them)|"
+                             r"\beach of them|\bevery candidate", re.I)
 _X_OF_Y = re.compile(r"\b(\d+) of (?:the |your )?(\d+)\b"
                      r"[^.!?\n]{0,25}\bskills?\b", re.I)
 
 
-_SENTENCE_END = re.compile(r"(?<!\bvs)(?<!\be\.g)(?<!\bi\.e)(?<!\bapprox)(?<!\bca)[.!?](?=\s|$)|\n")      # not the point in "4.51"
+# A sentence ends at . ! ? before a space (not the point in "4.51", not "vs." / "e.g." / "i.e." / "approx." / "ca.")
+_SENTENCE_END = re.compile(r"(?<!\bvs)(?<!\be\.g)(?<!\bi\.e)(?<!\bapprox)(?<!\bca)[.!?](?=\s|$)|\n")
 
 
 def _sentence_bounds(text: str, pos: int) -> tuple[int, int]:

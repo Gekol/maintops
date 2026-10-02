@@ -144,7 +144,7 @@ def trips_for(incident_ids) -> dict:
             "estimated", "departed_at")
     trips = {}
     for r in rows:
-        t = dict(zip(keys, r))
+        t = dict(zip(keys, r, strict=True))
         t["expected_arrival"] = expected_arrival(t["departed_at"], t["travel_minutes"])
         trips[t["incident_id"]] = t
     return trips

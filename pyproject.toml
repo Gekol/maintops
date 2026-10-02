@@ -1,0 +1,23 @@
+# Tool configuration only: the app's dependencies are in requirements.txt (Render) and
+# requirements-notebooks.txt (local notebook runs). Lint with: uvx ruff check .
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [
+    "data_synthesis/00_config.py",   # generated copy of 00_config.ipynb
+    ".venv-agent",
+    "*.ipynb",                       # Databricks-format notebooks: edited as JSON, kept byte-stable
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"pipeline/analytics/maintops_analytics.py" = ["F821"]   # `spark` is provided by the Declarative Pipeline runtime
+
+[tool.ruff.lint.isort]
+known-first-party = ["maintops_core"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

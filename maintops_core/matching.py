@@ -12,7 +12,7 @@ The track record and review features come from the Spark pipeline (handyman_perf
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from maintops_core import geo
 from maintops_core.db import get_connection
@@ -124,7 +124,7 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
         weights = URGENT_WEIGHTS if urgency in ("high", "critical") else WEIGHTS
 
         candidates = []
-        for r, t in zip(rows, travel):
+        for r, t in zip(rows, travel, strict=True):
             (hid, first, last, _, _, skills, avg_price, has_car, active,
              t_jobs, t_rated, t_success, t_rate, t_hours, a_jobs, a_rated, a_rating,
              sentiment, summary, _) = r
@@ -166,7 +166,7 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
         candidates.sort(key=lambda c: c["match_percent"], reverse=True)
         top = candidates[:TOP_N]
         reasoning = {
-            "computed_at": datetime.now(timezone.utc).isoformat(),
+            "computed_at": datetime.now(UTC).isoformat(),
             "weights": weights,
             "considered": len(candidates),
             "candidates": [{k: c[k] for k in ("handyman_id", "match_percent", "distance_km", "travel_minutes",

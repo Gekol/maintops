@@ -6,7 +6,7 @@ backfill and the real-time stream produce identical results.
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
@@ -107,8 +107,8 @@ def log_step(spark: SparkSession, run_id: str, step: str, started: float, rows_i
     finished = time.time()
     spark.createDataFrame([{
         "run_id": run_id, "step": step,
-        "started_at": datetime.fromtimestamp(started, timezone.utc),
-        "finished_at": datetime.fromtimestamp(finished, timezone.utc),
+        "started_at": datetime.fromtimestamp(started, UTC),
+        "finished_at": datetime.fromtimestamp(finished, UTC),
         "duration_s": round(finished - started, 1),
         "rows_in": rows_in, "rows_out": rows_out, "rows_rejected": rows_rejected,
         "checks": json.dumps({k: bool(v) for k, v in checks.items()}),
@@ -146,7 +146,9 @@ def clean_incidents(df: DataFrame, source: str) -> tuple[DataFrame, DataFrame]:
     Accepts bronze rows (all scalar fields as strings) or Lakebase CDF rows (typed, arrays as text).
     Fixable issues are repaired (whitespace, case); rule violations are rejected with reason codes.
     """
-    s = lambda c: F.trim(F.col(c).cast("string"))
+    def s(c):
+        return F.trim(F.col(c).cast("string"))
+
     ids = F.col("recommended_handyman_ids")
     rec_ids = _parse_pg_array(ids) if dict(df.dtypes).get("recommended_handyman_ids") == "string" \
         else ids.cast("array<bigint>")

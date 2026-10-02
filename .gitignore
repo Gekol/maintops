@@ -1,6 +1,28 @@
-.venv/
-__pycache__/
+# Secrets (copy .env.example to .env)
 .env
-.databricks/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
 .venv-agent/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Databricks / MLflow local state
+.databricks/
+mlruns/
+mlflow.db
+
+# Local eval reports (results live in MLflow)
 eval/results/
+
+# Editors, OS and personal tool settings
+.vscode/
+.idea/
+.claude/
+.DS_Store
+
+# Archives
+*.zip

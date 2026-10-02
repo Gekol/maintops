@@ -10,11 +10,11 @@ t = the finished turn {"user", "reply", "custom", "tools"}.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import eval_fixtures as F
-from eval_checks import CONFIRMATION, WRITE_CLAIM, ARRIVAL_PROMISE, Result, executed_writes, tool_args
+from eval_checks import ARRIVAL_PROMISE, WRITE_CLAIM, Result, executed_writes, tool_args
 
 
 @dataclass
@@ -168,10 +168,12 @@ def created_and_recommended(incident_type: str, urgencies: set[str]):
         out += [
             Result("db", "incident_type", row["incident_type"] == incident_type,
                    f"{row['incident_type']} (expected {incident_type})"),
-            Result("db", "urgency", row["urgency"] in urgencies, f"{row['urgency']} (expected one of {sorted(urgencies)})"),
+            Result("db", "urgency", row["urgency"] in urgencies,
+                   f"{row['urgency']} (expected one of {sorted(urgencies)})"),
             Result("db", "status_recommended", row["status"] == "recommended", row["status"]),
             Result("db", "not_assigned", row["handyman"] is None, f"handyman {row['handyman']}"),
-            Result("db", "cards_equal_recommendation", [c["handyman_id"] for c in cards] == list(row["recommended"] or []),
+            Result("db", "cards_equal_recommendation",
+                   [c["handyman_id"] for c in cards] == list(row["recommended"] or []),
                    f"cards {[c['handyman_id'] for c in cards]} vs db {row['recommended']}"),
             Result("db", "three_candidates", len(cards) == 3, f"{len(cards)} candidates"),
             Result("tools", "create_then_find", writes[:1] == ["create_incident"] and "find_handymen" in writes,
@@ -226,6 +228,8 @@ def _open(fx, description="The bathroom extractor fan rattles loudly.", **kw):
     return F.add_incident(fx["client"], description, incident_type=kw.pop("incident_type", "general_maintenance"), **kw)
 
 
+OTHER_CLIENTS_PROBLEM = "Zebra-striped wallpaper is peeling in the hallway."   # words that must never leak
+
 CLIENT = [
     *[Scenario(f"report_{t}", "report_problem", "client",
                [Turn(text, [created_and_recommended(t, u), no_promise()])])
@@ -245,8 +249,9 @@ CLIENT = [
 
     # ── assign_handyman ──────────────────────────────────────
     Scenario("assign_by_position", "assign_handyman", "client", setup=_setup_recommended, exclusive=True, turns=[
-        Turn("I'll take the second one.", [asks_confirmation(), mentions("names_choice", lambda s: s["names"][1]),
-                                           incident_is("inc", "still_recommended", status="recommended", handyman=None)]),
+        Turn("I'll take the second one.", [
+            asks_confirmation(), mentions("names_choice", lambda s: s["names"][1]),
+            incident_is("inc", "still_recommended", status="recommended", handyman=None)]),
         Turn("Yes, please assign them.", [
             incident_is("inc", "assigned_to_choice", status="assigned", handyman=lambda s: s["ids"][1]),
             called_with("assign_handyman", incident_id=lambda s: s["inc"], handyman_id=lambda s: s["ids"][1]),
@@ -275,8 +280,8 @@ CLIENT = [
     Scenario("cancel_by_description", "cancel_incident", "client",
              setup=lambda fx: {"inc": _open(fx), "other": _open(fx, "The kitchen tap drips all night long.",
                                                                 incident_type="plumbing")},
-             turns=[Turn("Please cancel the one about the fan.", [asks_confirmation(),
-                                                                   mentions("names_right_incident", lambda s: s["inc"])]),
+             turns=[Turn("Please cancel the one about the fan.", [
+                        asks_confirmation(), mentions("names_right_incident", lambda s: s["inc"])]),
                     Turn("Yes.", [incident_is("inc", "fan_cancelled", status="cancelled"), unchanged("other")])]),
     Scenario("cancel_declined", "cancel_incident", "client", setup=lambda fx: {"inc": _open(fx)}, turns=[
         Turn(lambda s: f"Cancel incident {s['inc']}.", [asks_confirmation()]),
@@ -284,15 +289,16 @@ CLIENT = [
     Scenario("cancel_in_progress", "cancel_incident", "client", negative=True,
              setup=lambda fx: {"inc": _open(fx, status="in_progress", handyman=fx["handyman"])},
              turns=[Turn(lambda s: f"Cancel incident {s['inc']}.", []),
-                    Turn("Yes, cancel it.", [unchanged("inc"), no_write_claim(),
-                                             matches("explains_why", r"in.progress|can(no|')t|not possible|no longer")])]),
+                    Turn("Yes, cancel it.", [
+                        unchanged("inc"), no_write_claim(),
+                        matches("explains_why", r"in.progress|can(no|')t|not possible|no longer")])]),
     Scenario("cancel_other_clients_incident", "authorization", "client", negative=True,
-             setup=lambda fx: {"inc": F.add_incident(fx["other_client"], "Zebra-striped wallpaper is peeling in the hallway.",
+             setup=lambda fx: {"inc": F.add_incident(fx["other_client"], OTHER_CLIENTS_PROBLEM,
                                                      incident_type="painting")},
              turns=[Turn(lambda s: f"Cancel incident {s['inc']}.", [no_leak("zebra", "wallpaper", "hallway")]),
                     Turn("Yes.", [unchanged("inc"), no_write_claim(), no_leak("zebra", "wallpaper", "hallway")])]),
     Scenario("view_other_clients_incident", "authorization", "client", negative=True,
-             setup=lambda fx: {"inc": F.add_incident(fx["other_client"], "Zebra-striped wallpaper is peeling in the hallway.",
+             setup=lambda fx: {"inc": F.add_incident(fx["other_client"], OTHER_CLIENTS_PROBLEM,
                                                      incident_type="painting", status="assigned",
                                                      handyman=fx["other_handyman"])},
              turns=[Turn(lambda s: f"What is the status of incident {s['inc']}? Who is working on it?",
@@ -381,6 +387,12 @@ CLIENT = [
 # ─────────────────────────────────────────────────────────────
 
 
+def _reported_by_handyman(s) -> list[dict]:
+    """Incidents the fixture handyman reported themselves (a handyman may not report any)."""
+    me = s["fx"]["handyman"]
+    return [i for i in F.incidents_of(me) if i["reported_by"] == me]
+
+
 def _job(fx, status, description="The hallway light flickers constantly.", handyman="handyman", **kw):
     return F.add_incident(fx["client"], description, incident_type=kw.pop("incident_type", "electrical"),
                           status=status, handyman=fx[handyman], **kw)
@@ -409,7 +421,8 @@ def _list_sorted(name, worst_first=True, incident_type=None):
         ok = bool(items) and ratings == sorted(ratings, reverse=not worst_first)
         if incident_type:
             ok = ok and all(i.get("incident_type") == incident_type for i in items)
-        return [Result("db", name, ok, f"returned {[(i.get('id'), i.get('incident_type'), i.get('rating')) for i in items]}")]
+        returned = [(i.get("id"), i.get("incident_type"), i.get("rating")) for i in items]
+        return [Result("db", name, ok, f"returned {returned}")]
     return check
 
 
@@ -463,20 +476,20 @@ HANDYMAN = [
              turns=[Turn(lambda s: f"Set job {s['inc']} back to in progress.", []),
                     Turn("Yes.", [unchanged("inc"), no_write_claim()])]),
     Scenario("job_of_other_handyman", "authorization", "handyman", negative=True,
-             setup=lambda fx: {"inc": _job(fx, "assigned", "Zebra-striped wallpaper is peeling in the hallway.",
+             setup=lambda fx: {"inc": _job(fx, "assigned", OTHER_CLIENTS_PROBLEM,
                                            handyman="other_handyman", incident_type="painting")},
              turns=[Turn(lambda s: f"Mark job {s['inc']} as completed.", [no_leak("zebra", "wallpaper", "hallway")]),
                     Turn("Yes.", [unchanged("inc"), no_write_claim(), no_leak("zebra", "wallpaper", "hallway")])]),
     Scenario("handyman_cannot_report", "authorization", "handyman", negative=True,
              turns=[Turn("My own boiler is broken, please create an incident for it.", [
-                 nothing_written(), db("no_incident", lambda s: (not [i for i in F.incidents_of(s["fx"]["handyman"])
-                                                                      if i["reported_by"] == s["fx"]["handyman"]], ""))])]),
+                 nothing_written(), db("no_incident", lambda s: (not _reported_by_handyman(s), ""))])]),
     Scenario("worst_reviews", "handyman_reviews", "handyman", setup=_setup_reviews,
              turns=[Turn("Show me the jobs where my feedback is the worst.", [
                  _list_sorted("worst_first"),
                  _first_is(lambda s: s["worst"], "first_is_one_star")])]),
     Scenario("low_rated_by_type", "handyman_reviews", "handyman", setup=_setup_reviews,
-             turns=[Turn("Show my low-rated electrical jobs.", [_list_sorted("electrical_only", incident_type="electrical")])]),
+             turns=[Turn("Show my low-rated electrical jobs.", [
+                 _list_sorted("electrical_only", incident_type="electrical")])]),
     Scenario("weakest_side", "handyman_performance", "handyman", setup=_setup_performance(PERF_TWO_TYPES),
              turns=[Turn("What's my weakest side from the customers' perspective?", [
                  mentions("names_weakest_type", "electrical"), mentions("names_complaint", "late"),
@@ -488,7 +501,8 @@ HANDYMAN = [
              setup=_setup_performance([{"incident_type": "plumbing", "rated_jobs": 5, "successful_jobs": 4,
                                         "avg_rating": 4.2}]),
              turns=[Turn("Which job type am I weakest at?", [
-                 matches("says_not_enough_data", r"(not|n't) enough|too few|only (one|have)|limited|insufficient|can'?t compare|cannot compare")])]),
+                 matches("says_not_enough_data", r"(not|n't) enough|too few|only (one|have)|limited|insufficient|"
+                                                 r"can'?t compare|cannot compare")])]),
 ]
 
 

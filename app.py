@@ -1,10 +1,9 @@
 """MaintOps – Flask frontend entry point."""
 
-import json
 import os
 import time
 import uuid
-from datetime import timezone
+from datetime import UTC
 from functools import wraps
 from zoneinfo import ZoneInfo
 
@@ -21,7 +20,6 @@ from flask import (
     session,
     url_for,
 )
-from flask_wtf.csrf import CSRFProtect
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -30,11 +28,11 @@ from flask_login import (
     login_user,
     logout_user,
 )
+from flask_wtf.csrf import CSRFProtect
 
-from db import get_connection
-from maintops_core import geo
+from maintops_core import geo, trips
 from maintops_core import incidents as inc
-from maintops_core import trips
+from maintops_core.db import get_connection
 from maintops_core.events import log_event
 
 app = Flask(__name__)
@@ -127,7 +125,6 @@ def client_required(f):
 # ─────────────────────────────────────────────────────────────
 DBX_HOST = os.environ.get("DATABRICKS_HOST", "")       # e.g. https://dbc-xxx.cloud.databricks.com
 DBX_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")     # PAT or OAuth token
-LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
 MANNY_ENDPOINT = os.environ.get("MANNY_ENDPOINT", "maintops-manny")   # Model Serving endpoint of the agent
 MANNY_URL = "/".join((DBX_HOST, "serving-endpoints", MANNY_ENDPOINT, "invocations"))
 MANNY_MAX_MESSAGES = 20
@@ -374,7 +371,7 @@ def local_time(value) -> str:
     """A UTC timestamp from Lakebase as Berlin wall-clock time, e.g. 14:05."""
     if value is None:
         return ""
-    return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).strftime("%H:%M")
+    return value.replace(tzinfo=UTC).astimezone(LOCAL_TZ).strftime("%H:%M")
 
 
 @app.route("/incidents/<int:incident_id>/feedback", methods=["POST"])

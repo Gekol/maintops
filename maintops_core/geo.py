@@ -149,7 +149,7 @@ def route_matrix(sources: list[tuple[float, float]], target: tuple[float, float]
         log_event("api_call", "geoapify_route_matrix", error is None and missing == 0, user_id=user_id,
                   incident_id=incident_id, error=error or (f"{missing} pairs missing" if missing else None),
                   latency_ms=int((time.time() - started) * 1000), details={"sources": len(sources)})
-    return [r if r is not None else estimate(src) for r, src in zip(results, sources)]
+    return [r if r is not None else estimate(src) for r, src in zip(results, sources, strict=True)]
 
 
 def _estimate(src: tuple[float, float], target: tuple[float, float], mode: str) -> dict:
@@ -190,7 +190,7 @@ def transit_times(sources: list[tuple[float, float]], target: tuple[float, float
     log_event("api_call", "geoapify_transit_routing", missing == 0, user_id=user_id, incident_id=incident_id,
               error=f"{missing} of {len(sources)} routes missing" if missing else None,
               latency_ms=int((time.time() - started) * 1000), details={"sources": len(sources)})
-    return [r if r is not None else _estimate(src, target, "transit") for r, src in zip(results, sources)]
+    return [r if r is not None else _estimate(src, target, "transit") for r, src in zip(results, sources, strict=True)]
 
 
 def travel_times(sources: list[tuple[float, float, bool]], target: tuple[float, float], *,
@@ -201,9 +201,9 @@ def travel_times(sources: list[tuple[float, float, bool]], target: tuple[float, 
     by_transit = [i for i, s in enumerate(sources) if not s[2]]
     out: list[dict | None] = [None] * len(sources)
     driving = route_matrix([sources[i][:2] for i in by_car], target, user_id=user_id, incident_id=incident_id)
-    for i, r in zip(by_car, driving):
+    for i, r in zip(by_car, driving, strict=True):
         out[i] = {**r, "mode": "drive"}
     transit = transit_times([sources[i][:2] for i in by_transit], target, user_id=user_id, incident_id=incident_id)
-    for i, r in zip(by_transit, transit):
+    for i, r in zip(by_transit, transit, strict=True):
         out[i] = r
     return out

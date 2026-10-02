@@ -10,7 +10,8 @@ own implementation, so the release gate does not depend on this code being right
 import math
 import re
 
-_SENTENCE_END = re.compile(r"(?<!\bvs)(?<!\be\.g)(?<!\bi\.e)(?<!\bapprox)(?<!\bca)[.!?](?=\s|$)|\n")          # not the point in "4.51"
+# A sentence ends at . ! ? before a space (not the point in "4.51", not "vs." / "e.g." / "i.e." / "approx." / "ca.")
+_SENTENCE_END = re.compile(r"(?<!\bvs)(?<!\be\.g)(?<!\bi\.e)(?<!\bapprox)(?<!\bca)[.!?](?=\s|$)|\n")
 _NUMBER = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)?")
 _LIST_MARKER = re.compile(r"(?m)^\s*(?:\d+[.)]|[-*•])\s+")
 _RATING_SCALE = re.compile(r"\b1\s*(?:–|-|to)\s*5\b|(?:\bout of|/)\s*5\b", re.I)

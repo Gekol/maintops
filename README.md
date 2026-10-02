@@ -23,7 +23,6 @@ A client describes a problem in plain language; an agent classifies it and the s
 
 ```
 app.py                  Flask app: routes, auth, /api/manny proxy, dashboard actions, CV upload
-db.py                   re-exports maintops_core.db (shared Lakebase pool)
 maintops_core/          services shared by the app and the agent
   incidents.py          incident lifecycle with ownership + transition checks
   matching.py           find_handymen: filter → pre-filter → Geoapify → deterministic score → top 3
@@ -45,6 +44,8 @@ notebooks/              RAG: 01 schema → 02 parse FAQ → 03 chunk + index →
 data_synthesis/         synthetic data (01–06) and Lakebase load (07)
 sqls/                   base DDL + migrations/ (applied by migrate.py)
 tests/                  unit tests (pytest)
+pyproject.toml          tool config: ruff (lint) and pytest
+.env.example            template for the local .env (all settings, no secrets)
 databricks.yml          Asset Bundle: all jobs and the analytics pipeline
 app.yaml, render.yaml   deployment configs
 requirements.txt        App dependencies
@@ -60,14 +61,9 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-export FLASK_APP=app.py
-export FLASK_SECRET_KEY=<random string>
-export LAKEBASE_PG_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
-# Needed for CV parsing:
-export DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
-export DATABRICKS_TOKEN=<personal access token>
-
-flask run --debug
+cp .env.example .env          # then fill in the values (see "Environment variables")
+set -a; . ./.env; set +a
+flask --app app run --debug
 ```
 
 The app is served at http://127.0.0.1:5000.
@@ -77,7 +73,7 @@ The app is served at http://127.0.0.1:5000.
 | Variable | Required | Description |
 |---|---|---|
 | `FLASK_SECRET_KEY` | yes (prod) | Session/CSRF signing key. Defaults to an insecure dev value. |
-| `LAKEBASE_PG_URL` | yes | Postgres connection string for Lakebase (see `db.py`). |
+| `LAKEBASE_PG_URL` | yes | Postgres connection string for Lakebase (see `maintops_core/db.py`). |
 | `DATABRICKS_HOST` | yes | Workspace URL (Manny endpoint, CV parsing). |
 | `DATABRICKS_TOKEN` | yes | PAT or OAuth token (only the backend holds it). |
 | `MANNY_ENDPOINT` | no | Manny serving endpoint; defaults to `maintops-manny`. |
@@ -162,7 +158,6 @@ Notes:
 
 ```bash
 pip install -r requirements-notebooks.txt
-pip install --no-deps langgraph-prebuilt==1.0.1   # must be installed after the file above
 ```
 
 ---
@@ -308,7 +303,7 @@ Parsing and extraction are separate steps: parsing does not produce the final pr
 
 ## RAG assistant for visitors
 
-Unregistered visitors can ask Manny questions without an account. The informational documents are parsed, chunked and indexed for vector retrieval (`notebooks/02`–`03`), and a LangGraph agent answers from them (`notebooks/04`). It is informational only and needs no user record.
+Unregistered visitors can ask Manny questions without an account. The informational documents are parsed, chunked and indexed for vector retrieval (`notebooks/02`–`03`), and Manny (`agent/manny.py`) answers from them with `search_faq`. It is informational only and needs no user record.
 
 ## Feedback loop
 

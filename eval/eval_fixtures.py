@@ -162,7 +162,8 @@ def add_performance(handyman: int, rows: list[dict], review_summary: str | None 
 
 def recommend(client: int, description: str, incident_type: str, urgency: str, skills: list[str]) -> dict:
     """An incident with real recommendations, made through the same services Manny uses."""
-    from maintops_core import incidents as inc, matching
+    from maintops_core import incidents as inc
+    from maintops_core import matching
     created = inc.create_incident(client, description, incident_type, urgency, skills)
     out = matching.find_handymen(client, created["id"])
     ids = [c["handyman_id"] for c in out["candidates"]]
@@ -186,7 +187,7 @@ def incident(incident_id: int) -> dict | None:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(_INCIDENT_SQL + " WHERE id = %s", (incident_id,))
         row = cur.fetchone()
-    return dict(zip(_INCIDENT_KEYS, row)) if row else None
+    return dict(zip(_INCIDENT_KEYS, row, strict=True)) if row else None
 
 
 @_retry_on_drop
@@ -195,7 +196,7 @@ def incidents_of(user_id: int) -> list[dict]:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(_INCIDENT_SQL + " WHERE reported_by_user_id = %s OR handyman_user_id = %s ORDER BY id",
                     (user_id, user_id))
-        return [dict(zip(_INCIDENT_KEYS, r)) for r in cur.fetchall()]
+        return [dict(zip(_INCIDENT_KEYS, r, strict=True)) for r in cur.fetchall()]
 
 
 @_retry_on_drop
