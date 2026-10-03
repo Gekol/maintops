@@ -3,8 +3,8 @@
 The model sees three candidates at once and can mix them up ("Milan: 96% across 464 jobs" where 96 and 464
 belong to Nina). Before a reply is sent, every sentence that names exactly one candidate and compares nothing is
 checked: each number in it must be one of that candidate's values (or a plain rounding of one), or a shared value
-such as the incident id. Deterministic, no LLM. The eval (eval/eval_checks.py) checks the same property with its
-own implementation, so the release gate does not depend on this code being right.
+such as the incident id. Deterministic, no LLM. The release gate checks the same property in eval/eval_checks.py
+with its own implementation, so it does not depend on this code being right.
 """
 
 import math

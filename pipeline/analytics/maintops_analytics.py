@@ -148,7 +148,8 @@ def analytics_incident_activity_daily():
 def analytics_recommendation_rank():
     ids = F.split(F.regexp_replace("recommended_handyman_ids", r"[{}\s]", ""), ",")
     return (dlt.read("analytics_incident_changes")
-            .where("change_type = 'update_postimage' AND status = 'assigned' AND recommended_handyman_ids IS NOT NULL")
+            .where((F.col("change_type") == "update_postimage") & (F.col("status") == "assigned")
+                   & F.col("recommended_handyman_ids").isNotNull())
             .dropDuplicates(["id"])
             .withColumn("chosen_rank", F.array_position(ids, F.col("handyman_user_id").cast("string")))
             .groupBy("chosen_rank").agg(F.count("*").alias("assignments")))
@@ -158,13 +159,14 @@ def analytics_recommendation_rank():
     name="analytics_billing_monthly",
     comment="Completed jobs per completion month and type: hours worked, amount paid, hourly rate (amount / hours)",
 )
-@dlt.expect("rate_plausible", "avg_hourly_rate IS NULL OR avg_hourly_rate BETWEEN 10 AND 300")
+@dlt.expect("rate_plausible", "avg_hourly_rate IS NULL OR " "avg_hourly_rate BETWEEN 10 AND 300")
 def analytics_billing_monthly():
     # The latest change of each incident; deleted incidents (latest change = delete) drop out
     latest = (dlt.read("analytics_incident_changes")
               .withColumn("_rn", F.row_number().over(
                   Window.partitionBy("id").orderBy(F.desc("changed_at"), F.asc(F.col("change_type") != "delete"))))
-              .where("_rn = 1 AND change_type <> 'delete' AND status = 'completed' AND hours_worked IS NOT NULL"))
+              .where((F.col("_rn") == 1) & (F.col("change_type") != "delete") & (F.col("status") == "completed")
+                     & F.col("hours_worked").isNotNull()))
     return (latest.groupBy(F.date_trunc("month", "completed_at").alias("month"), "incident_type")
             .agg(F.count("*").alias("jobs"),
                  F.sum("hours_worked").alias("hours_worked"),
