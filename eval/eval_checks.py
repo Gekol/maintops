@@ -95,6 +95,8 @@ _THE_OTHERS = re.compile(r"\bthe other (?:two|candidates|ones)\b|\bthe others\b|
 _ALL_CANDIDATES = re.compile(r"\ball\s+(?:three|3)\b(?!\s+(?:of\s+\d|(?:(?:required|key|needed|listed)\s+)?skills?\b))|"
                              r"\ball\s+(?:the\s+)?(?:candidates|handymen|of them)|"
                              r"\beach of them|\bevery candidate", re.I)
+_AND_RANK = r"(?:\s*(?:,|and|&)\s*(\d))?"
+_RANKS = re.compile(rf"\b(?:candidates?|options?|numbers?)\s+(\d){_AND_RANK}{_AND_RANK}", re.I)   # "candidates 2 and 3"
 _X_OF_Y = re.compile(r"\b(\d+) of (?:the |your )?(\d+)\b"
                      r"[^.!?\n]{0,25}\bskills?\b", re.I)
 
@@ -133,9 +135,17 @@ def skill_claim_errors(reply: str, candidates: list[dict], required_count: int) 
     def about(pos: int) -> list[dict]:
         start, end = _sentence_bounds(reply, pos)
         before = [(p, c) for p, c in mentions if start <= p < pos]
+        between = reply[max([start] + [p for p, _ in before]):pos]
+        ranks = [m for m in _RANKS.finditer(between)]
+        if ranks:                                       # "…, while candidates 2 and 3 each cover 3 of 4"
+            numbers = [int(n) for n in ranks[-1].groups() if n]
+            return [candidates[n - 1] for n in numbers if 1 <= n <= len(candidates)]
         if before:                                      # "…, and Susanne Becker only matches 2 of 4" = Susanne
             nearest = max(p for p, _ in before)         # (a shared first name: every candidate it can mean)
-            return list({c["handyman_id"]: c for p, c in before if p == nearest}.values())
+            named = {c["handyman_id"]: c for p, c in before if p == nearest}
+            if _THE_OTHERS.search(between):             # "Jens …, the other two cover 3 of 4"
+                return [c for c in candidates if c["handyman_id"] not in named]
+            return list(named.values())
         if _ALL_CANDIDATES.search(reply[start:end]):
             return candidates
         if _THE_OTHERS.search(reply[start:end]):            # "the other two …" = all but the one just named
@@ -184,6 +194,23 @@ def travel_mode_errors(reply: str, candidates: list[dict]) -> list[str]:
             errors.append(f"{c['name']} has no car but is described as driving")
         if c.get("travel_mode") == "drive" and _BY_TRANSIT.search(sentence):
             errors.append(f"{c['name']} drives but is described as using public transport")
+    return errors
+
+
+_TOP_PICK = re.compile(r"\b(?:top pick|top recommendation|first choice|best match)\b", re.I)
+
+
+def top_pick_errors(reply: str, candidates: list[dict]) -> list[str]:
+    """The handyman Manny calls its top pick must be the first candidate (MaintOps' ranking, not the model's)."""
+    if not candidates:
+        return []
+    mentions = _mentions(reply, candidates)
+    errors = []
+    for m in _TOP_PICK.finditer(reply):
+        start, end = _sentence_bounds(reply, m.start())
+        after = [c for p, c in mentions if m.end() <= p < end]
+        if after and after[0]["handyman_id"] != candidates[0]["handyman_id"]:
+            errors.append(f"top pick is {after[0]['name']}, but the first candidate is {candidates[0]['name']}")
     return errors
 
 

@@ -170,6 +170,8 @@ def generic_checks(sc, s: dict, t: dict, history: list[dict]) -> list[C.Result]:
         shared |= {n for m in history if m["role"] == "user" for n in C.numbers_in(m["content"])}
         errors = C.misattributed_figures(t["reply"], candidates, shared)
         out.append(C.Result("grounding", "figures_belong_to_candidate", not errors, "; ".join(errors)))
+        wrong_pick = C.top_pick_errors(t["reply"], candidates)
+        out.append(C.Result("grounding", "top_pick_is_first", not wrong_pick, "; ".join(wrong_pick)))
         wrong_mode = C.travel_mode_errors(t["reply"], candidates)
         out.append(C.Result("grounding", "travel_mode_stated_right", not wrong_mode, "; ".join(wrong_mode)))
         unlabelled = C.prices_without_hourly_unit(t["reply"])

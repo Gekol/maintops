@@ -10,7 +10,7 @@ and records the hours and the amount paid. The client's rating flows back into t
 | | |
 |---|---|
 | Scale | 1,000,000-incident history (Spark, Delta), 110,000 users and 10,000 handymen with PDF CVs, 44,800 live incidents in Lakebase |
-| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **63 scenarios × 3 runs, ~1,800 checks in code, any failure blocks the release** |
+| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **63 scenarios × 3 runs, ~1,850 checks in code, any failure blocks the release** |
 | Real time | a review → the handyman's scorecard back in Lakebase: **37.1 s for a burst of 1,000 reviews**, median 32.7 s in normal operation |
 | Unstructured | 10,000 CV PDFs parsed (100 %), FAQ retrieval hit@3 = 12/12, review sentiment and summaries with AI functions |
 | Quality | 275 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
@@ -75,7 +75,7 @@ Every claim links to code or to an exported measurement in [`evidence/`](evidenc
 | **Lakebase data model** (15) | 7 tables: users, handyman details, incidents, trips, app events, two scorecard tables. PK/FK everywhere, **30 CHECK constraints**, triggers (`updated_at`, handyman role), 21 indexes, duplicate-incident guard, audit timestamps; 6 idempotent migrations with a dry-run mode | [evidence/lakebase.md](evidence/lakebase.md) (exported from `pg_catalog`), [sqls/](sqls/) |
 | **Agent: retrieval** (6) | 8 read tools over Lakebase, Vector Search (FAQ) and the Spark-built scorecards; `find_handymen` combines Lakebase, Delta-derived features and Geoapify | [Manny](#manny-the-action-taking-agent), [agent/manny.py](agent/manny.py) |
 | **Agent: write actions** (8) | 5 write tools: create incident, assign handyman, cancel, rate, update job status (with hours and amount). Identity from the server only, explicit confirmation before every consequential write, a guard that refuses a write when the user's "yes" changes a detail, validation in the service layer and the database | [evidence/analytics.md](evidence/analytics.md) (write actions), [evidence/agent.md](evidence/agent.md) (refusals by rule) |
-| **Agent: quality** (6) | Release gate: 63 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
+| **Agent: quality** (6) | Release gate: 63 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, the top pick is the top-ranked candidate, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
 | **Analytics pipeline** (10) | Lakebase **Change Data Feed** → Lakeflow **Declarative Pipeline** `maintops_analytics` (2 streaming tables, 9 materialized views, expectations), refreshed every 30 min | [evidence/analytics.md](evidence/analytics.md), [pipeline/analytics/](pipeline/analytics/) |
 | **Frontend and workflow** (10) | Role-specific dashboards, chat widget with candidate cards and "Choose", live dashboard updates, confirmations, loading and error states, CV sign-up, trips with ETA, ratings | [walkthrough](#full-manual-test-walkthrough), [templates/](templates/) |
 | **Deployment** (5) | Render, auto-deploy on push, health check, secrets in the dashboard; Databricks side as one Asset Bundle | https://maintops-h3bv.onrender.com, [render.yaml](render.yaml), [databricks.yml](databricks.yml), [Run it yourself](#run-it-yourself) |
@@ -201,7 +201,7 @@ Every check is code, not an LLM's opinion:
 | The database is exactly right | the incident, rating, hours, amount or status in Lakebase, and nothing written before an explicit yes |
 | The right tools with the right arguments | from `app_events` |
 | No invented figures | every number in the reply exists in data that user may see; figures about one handyman are that handyman's own |
-| Claims are true | "matches all required skills", "3 of 4 skills", "by car" vs "by public transport", prices per hour |
+| Claims are true | "matches all required skills", "3 of 4 skills", "by car" vs "by public transport", prices per hour, the "top pick" is the top-ranked candidate |
 | Safety | emergency advice first, no other phone numbers, refusals of other users' data and of injected instructions |
 
 Any failed check blocks the release; only a full pass promotes the version to production (UC alias `production`).

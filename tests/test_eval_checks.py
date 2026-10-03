@@ -12,6 +12,7 @@ from eval_checks import (  # noqa: E402
     numbers_in,
     prices_without_hourly_unit,
     skill_claim_errors,
+    top_pick_errors,
     travel_mode_errors,
     ungrounded_numbers,
     values_in,
@@ -164,3 +165,23 @@ def test_a_name_in_the_sentence_beats_the_other_two():
              "Ahmet Bohm is a 1-minute drive away, and Susanne Becker only matches 2 of 4 required skills.")
     assert skill_claim_errors(reply, cands, 4) == []
     assert skill_claim_errors(reply.replace("Susanne Becker only", "Ahmet Bohm only"), cands, 4)
+
+
+def test_top_pick_must_be_the_first_candidate():
+    cands = [{"handyman_id": 1, "name": "Susanne Becker", "matched_skills": []},
+             {"handyman_id": 2, "name": "Christina Lewandowski", "matched_skills": []}]
+    assert top_pick_errors("My top pick is **Susanne Becker**: 9 years of drains.", cands) == []
+    assert top_pick_errors("My top pick is **Christina Lewandowski** — closest of the three.", cands) == [
+        "top pick is Christina Lewandowski, but the first candidate is Susanne Becker"]
+    assert top_pick_errors("Christina is also close by.", cands) == []
+
+
+def test_candidates_referred_to_by_rank():
+    cands = [{"handyman_id": 1, "name": "Jens Schmidt", "matched_skills": ["a", "b"]},
+             {"handyman_id": 2, "name": "Ben Ott", "matched_skills": ["a", "b", "c"]},
+             {"handyman_id": 3, "name": "Cem Aras", "matched_skills": ["a", "b", "d"]}]
+    reply = ("My top pick is **Jens Schmidt**. Do note he matches 2 of 4 required skills, while candidates 2 and 3 "
+             "each cover 3 of 4 if broader skill coverage is a priority for you.")
+    assert skill_claim_errors(reply, cands, 4) == []
+    assert skill_claim_errors(reply.replace("candidates 2 and 3 each cover 3", "candidate 2 covers 4"), cands, 4)
+    assert skill_claim_errors("Jens Schmidt covers 2 of 4, the other two cover 3 of 4 skills.", cands, 4) == []
