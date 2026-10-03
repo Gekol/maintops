@@ -220,9 +220,12 @@ Questions about their feedback:
 
 CV_PROMPT = f"""
 You extract a handyman profile from CV text. Return ONLY valid JSON, no markdown:
-{{"first_name": "", "last_name": "", "email": "", "phone": "", "specialisations": [], "skills": "", "experience": ""}}
+{{"first_name": "", "last_name": "", "email": "", "phone": "", "house": "", "postal_code": "", "city": "", "state": "",
+  "country": "", "specialisations": [], "skills": "", "experience": ""}}
 - specialisations must be a subset of: {', '.join(inc.SPECIALISATIONS)}.
 - skills: comma-separated specific abilities; experience: a 1–2 sentence professional summary.
+- The candidate's own home address only (never an employer's): house = street and number, postal_code, city;
+  state and country only if the CV writes them.
 - Use empty strings / arrays for anything not in the CV. Never invent details."""
 
 
@@ -592,8 +595,13 @@ class MannyAgent(ResponsesAgent):
             profile = json.loads(raw)
         except json.JSONDecodeError:
             return "Could not read a profile from this CV.", {"profile": None}
+        if not isinstance(profile, dict):
+            return "Could not read a profile from this CV.", {"profile": None}
         specs = [s for s in profile.get("specialisations") or [] if s in inc.SPECIALISATIONS]
         profile["specialisations"] = specs
+        for key in ("house", "postal_code", "city", "state", "country"):
+            value = profile.get(key)
+            profile[key] = " ".join(value.split())[:128] if isinstance(value, str) else ""
         return "Profile extracted.", {"profile": profile}
 
 

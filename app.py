@@ -651,13 +651,13 @@ def register():
         postal_code = request.form.get("postal_code", "").strip()
         city = request.form.get("city", "").strip()
         state = request.form.get("state", "").strip() or None
-        country = request.form.get("country", "").strip()
+        country = request.form.get("country", "").strip() or None      # empty: taken from geocoding
         phone = request.form.get("phone", "").strip() or None
         date_of_birth = request.form.get("dob", "").strip() or None
         terms = request.form.get("terms")
 
         errors = []
-        if not all([first_name, last_name, email, house, postal_code, city, country, password, confirm_password]):
+        if not all([first_name, last_name, email, house, postal_code, city, password, confirm_password]):
             errors.append("Please complete all required fields.")
         if password != confirm_password:
             errors.append("Passwords do not match.")
@@ -733,8 +733,8 @@ def register():
 
 
 def _geocode_user(user_id, house, postal_code, city, country):
-    """Store the address coordinates (Geoapify). Registration still succeeds if geocoding fails;
-    find_handymen geocodes lazily on first use."""
+    """Store the address coordinates (Geoapify), and its state and country where the user left those fields empty.
+    Registration still succeeds if geocoding fails; find_handymen geocodes lazily on first use."""
     address = ", ".join(p for p in (house, f"{postal_code or ''} {city or ''}".strip(), country) if p)
     try:
         loc = geo.geocode(address, user_id=user_id)
@@ -742,8 +742,9 @@ def _geocode_user(user_id, house, postal_code, city, country):
         app.logger.warning("Geocoding failed for user %s: %s", user_id, exc)
         return
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE maintops.users SET latitude = %s, longitude = %s WHERE id = %s",
-                    (loc["lat"], loc["lon"], user_id))
+        cur.execute("UPDATE maintops.users SET latitude = %s, longitude = %s, state = COALESCE(state, %s), "
+                    "country = COALESCE(country, %s) WHERE id = %s",
+                    (loc["lat"], loc["lon"], loc.get("state"), loc.get("country"), user_id))
         conn.commit()
 
 

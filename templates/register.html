@@ -78,7 +78,7 @@
       </div>
       <div class="form-group">
         <label for="country">Country</label>
-        <input type="text" id="country" name="country" value="United Kingdom">
+        <input type="text" id="country" name="country" placeholder="Germany (filled from the address if left empty)">
       </div>
     </div>
 
@@ -293,6 +293,11 @@
         if (data.last_name)  document.getElementById('last_name').value  = data.last_name;
         if (data.email)      document.getElementById('reg_email').value  = data.email;
         if (data.phone)      document.getElementById('phone').value      = data.phone;
+
+        // Pre-fill the address the CV states (state and country are filled from geocoding on save if left empty)
+        ['house', 'postal_code', 'city', 'state', 'country'].forEach(function (key) {
+          if (data[key]) document.getElementById(key).value = data[key];
+        });
 
         // Pre-fill professional fields
         if (data.skills)     document.getElementById('skills').value     = data.skills;

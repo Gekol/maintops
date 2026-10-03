@@ -236,9 +236,12 @@ def cv_truths(n: int) -> list[dict]:
     """Synthetic handymen whose CV text and true profile are both known (the CV was generated from the profile)."""
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute("""
-                       SELECT u.first_name, u.last_name, u.email, u.phone, d.specialisations, d.cv_raw_text
+                       SELECT u.first_name, u.last_name, u.email, u.phone, d.specialisations, d.cv_raw_text,
+                              u.house, u.postal_code, u.city, u.state, u.country
                        FROM maintops.users u JOIN maintops.handyman_details d ON d.user_id = u.id
                        WHERE d.cv_raw_text IS NOT NULL AND length(d.cv_raw_text) > 200 AND u.email NOT LIKE %s
                        ORDER BY u.id LIMIT %s""", (f"%@{DOMAIN}", n))
         return [{"first_name": r[0], "last_name": r[1], "email": r[2], "phone": r[3],
-                 "specialisations": sorted(r[4] or []), "cv_text": r[5]} for r in cur.fetchall()]
+                 "specialisations": sorted(r[4] or []), "cv_text": r[5],
+                 "house": r[6], "postal_code": r[7], "city": r[8], "state": r[9], "country": r[10]}
+                for r in cur.fetchall()]

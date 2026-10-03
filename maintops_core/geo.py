@@ -70,7 +70,8 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def geocode(address: str, *, user_id: int | None = None) -> dict:
-    """Address → {"lat", "lon", "formatted", "confidence"}. Raises GeoError if not found or invalid."""
+    """Address → {"lat", "lon", "formatted", "state", "country", "confidence"}. Raises GeoError if not found or
+    invalid."""
     address = (address or "").strip()
     if not address:
         raise GeoError("empty address")
@@ -91,7 +92,8 @@ def geocode(address: str, *, user_id: int | None = None) -> dict:
             raise GeoError("malformed coordinates in geocoding response")
         if confidence < MIN_CONFIDENCE:
             raise GeoError(f"address match too uncertain (confidence {confidence:.2f})")
-        return {"lat": lat, "lon": lon, "formatted": top.get("formatted"), "confidence": confidence}
+        return {"lat": lat, "lon": lon, "formatted": top.get("formatted"), "state": top.get("state"),
+                "country": top.get("country"), "confidence": confidence}
     except (requests.RequestException, ValueError) as exc:
         error = f"geocoding request failed: {exc}"
         raise GeoError(error) from exc

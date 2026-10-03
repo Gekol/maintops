@@ -73,9 +73,11 @@ def test_haversine_berlin_hamburg():
 
 
 def test_geocode_valid(monkeypatch):
-    payload = {"results": [{"lat": 52.52, "lon": 13.41, "formatted": "Berlin", "rank": {"confidence": 0.9}}]}
+    payload = {"results": [{"lat": 52.52, "lon": 13.41, "formatted": "Berlin", "state": "Berlin",
+                            "country": "Germany", "rank": {"confidence": 0.9}}]}
     monkeypatch.setattr(geo, "_get_session", lambda: FakeSession(FakeResponse(200, payload)))
-    assert geo.geocode("Alexanderplatz 1, Berlin")["lat"] == 52.52
+    loc = geo.geocode("Alexanderplatz 1, Berlin")
+    assert (loc["lat"], loc["state"], loc["country"]) == (52.52, "Berlin", "Germany")
 
 
 @pytest.mark.parametrize("payload, message", [

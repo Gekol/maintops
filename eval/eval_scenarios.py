@@ -571,6 +571,7 @@ def cv_scenarios(truths: list[dict]) -> list[Scenario]:
         def check(s, t):
             p = t["custom"].get("profile") or {}
             digits = lambda x: re.sub(r"\D", "", x or "")[-9:]                 # noqa: E731 — ignore +49 / 0 prefix
+            same = lambda x: " ".join((x or "").lower().split())               # noqa: E731 — case, spacing
             return [
                 Result("db", "first_name", (p.get("first_name") or "").strip() == truth["first_name"],
                        f"{p.get('first_name')!r} vs {truth['first_name']!r}"),
@@ -582,6 +583,11 @@ def cv_scenarios(truths: list[dict]) -> list[Scenario]:
                        f"{p.get('phone')!r} vs {truth['phone']!r}"),
                 Result("db", "specialisations", sorted(p.get("specialisations") or []) == truth["specialisations"],
                        f"{p.get('specialisations')} vs {truth['specialisations']}"),
+                *[Result("db", key, same(p.get(key)) == same(truth[key]), f"{p.get(key)!r} vs {truth[key]!r}")
+                  for key in ("house", "postal_code", "city")],
+                # The CVs do not write state or country: empty is right, a value must be the true one
+                *[Result("db", key, same(p.get(key)) in ("", same(truth[key])), f"{p.get(key)!r} vs {truth[key]!r}")
+                  for key in ("state", "country")],
             ]
         return check
     return [Scenario(f"cv_{n}", "extract_cv", "visitor", task="extract_cv",

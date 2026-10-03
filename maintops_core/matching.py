@@ -85,8 +85,9 @@ def _client_location(cur, client_id: int) -> tuple[float, float]:
         loc = geo.geocode(address, user_id=client_id)
     except geo.GeoError as exc:
         raise ServiceError("We could not locate your address. Please check it on your profile page.") from exc
-    cur.execute("UPDATE maintops.users SET latitude = %s, longitude = %s WHERE id = %s",
-                (loc["lat"], loc["lon"], client_id))
+    cur.execute("UPDATE maintops.users SET latitude = %s, longitude = %s, state = COALESCE(state, %s), "
+                "country = COALESCE(country, %s) WHERE id = %s",
+                (loc["lat"], loc["lon"], loc.get("state"), loc.get("country"), client_id))
     return loc["lat"], loc["lon"]
 
 
