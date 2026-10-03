@@ -1,354 +1,524 @@
 # MaintOps
 
-AI-powered handyman matching and incident management, built as a Databricks capstone project.
-A client describes a problem in plain language; an agent classifies it and the system recommends the three best-suited handymen (skills, experience, ratings, workload, travel time). The client picks one, the handyman completes the job, and the client's feedback improves future rankings.
+**AI-powered handyman matching and incident management on Databricks.** A client describes a household problem in
+plain words to **Manny**, the AI assistant. Manny logs the incident, ranks the three best-suited handymen by skills,
+track record, reviews, workload and real travel time, and assigns the client's choice. The handyman sets off, works,
+and records the hours and the amount paid. The client's rating flows back into the rankings within a minute.
 
-> **Status:** core workflow implemented end to end — Manny (agent served from Unity Catalog) creates incidents, ranks handymen with real Geoapify travel times and assigns the client's choice; handymen complete jobs; client reviews flow back through Lakebase CDF and a streaming pipeline into the rankings within a minute. See [Rubric evidence](#rubric-evidence) for measured results.
+**Live app: https://maintops-h3bv.onrender.com** · all demo accounts use the password `MaintOps!2026`
 
-## Architecture at a glance
+| | |
+|---|---|
+| Scale | 1,000,000-incident history (Spark, Delta), 110,000 users and 10,000 handymen with PDF CVs, 44,800 live incidents in Lakebase |
+| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **63 scenarios × 3 runs, ~1,800 checks in code, any failure blocks the release** |
+| Real time | a review → the handyman's scorecard back in Lakebase: **37.1 s for a burst of 1,000 reviews**, median 32.7 s in normal operation |
+| Unstructured | 10,000 CV PDFs parsed (100 %), FAQ retrieval hit@3 = 12/12, review sentiment and summaries with AI functions |
+| Quality | 275 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
 
-| Layer | Technology | Role |
+---
+
+## Contents
+
+1. [For instructors: try it in five minutes](#for-instructors-try-it-in-five-minutes)
+2. [Rubric map: requirement → implementation → evidence](#rubric-map)
+3. [What MaintOps does](#what-maintops-does)
+4. [Architecture](#architecture)
+5. [Manny, the action-taking agent](#manny-the-action-taking-agent)
+6. [Matching handymen](#matching-handymen)
+7. [Lakebase data model](#lakebase-data-model)
+8. [Spark pipelines: batch and real time](#spark-pipelines-batch-and-real-time)
+9. [Analytics pipeline](#analytics-pipeline)
+10. [Third-party API: Geoapify](#third-party-api-geoapify)
+11. [Run it yourself](#run-it-yourself)
+12. [Full manual test walkthrough](#full-manual-test-walkthrough)
+13. [Repository layout](#repository-layout)
+14. [Known limitations and future work](#known-limitations-and-future-work)
+15. [Appendix: design specification](#appendix-design-specification)
+
+---
+
+## For instructors: try it in five minutes
+
+Open **https://maintops-h3bv.onrender.com** (free Render instance: the first request after a quiet period takes up to
+50 s while it wakes up). Password for every account: `MaintOps!2026`.
+
+| Account | Role | Try this |
 |---|---|---|
-| Web app | Flask, Flask-Login, Flask-WTF (CSRF), gunicorn | UI, auth, dashboards, Manny chat widget |
-| Agent | **Manny**: MLflow `ResponsesAgent` registered in UC (`bootcamp_students.maintops.manny`), served by `agents.deploy` (endpoint `maintops-manny`), LLM `databricks-claude-sonnet-4-6` | all AI: FAQ answers (RAG), incident classification + creation, ranking, assignment, feedback, CV profile extraction |
-| Operational store | Lakebase (Postgres) | users, handymen, incidents, app events, handyman scorecards |
-| CDC | Lakebase Change Data Feed → `lb_*_history` Delta tables (~15 s) | feeds the live stream and analytics |
-| Batch pipeline | Spark (Auto Loader, Delta MERGE), `ai_parse_document`, `ai_analyze_sentiment`, `ai_query` | 1M-incident history → validated silver → handyman scorecards; 10k CV PDFs → text |
-| Live pipeline | Spark Structured Streaming on CDF | new reviews → affected handymen's scorecards in Lakebase in < 1 min |
-| Analytics | Lakeflow Declarative Pipeline on CDF | agent / tool / API / guardrail / write-action / incident metrics |
-| RAG | Vector Search (`faq_index` on endpoint `maintops_vs`, `databricks-gte-large-en`) | FAQ retrieval for Manny |
-| Geo | Geoapify Geocoding + Route Matrix + Routing (public transport) | address coordinates, real travel times: by car for handymen with `has_car`, by public transport otherwise |
+| *(logged out)* | visitor | Chat bubble (bottom right) → "Can I choose the handyman myself?" → Manny answers from the user guide |
+| `thomaskoch37@example.com` | client | Tell Manny "My kitchen tap is leaking" → incident logged, 3 ranked handymen as cards (€/h, travel by car or public transport) → **Choose** → confirm → assigned; the dashboard updates without a reload |
+| `ute.wisniewski15@example.net` | handyman with a car | Job #981034: **I'm on my way** (from home, by car or public transport) → **Start job** → **Mark completed** with 2.5 h and €135 |
+| `sergejhartmann66@example.com` | client | #981034 shows Ute's expected arrival, then her 2.5 h · €135.00; rate the job |
+| `nina.mayer79@example.org` | handyman without a car | Ask Manny "Job 632296 is finished." → it asks for the hours and the amount, repeats them and saves only after "Yes" |
+| `bernd.wolf@example.net` | client | "Rate job 744760 5 stars" → when asked to confirm: "Yes, but make it 3 stars" → Manny notices the change and asks again |
+
+Sign-up with a CV: Sign up → Handyman → upload a CV PDF (sample in the repo: [samples/cv_100001.pdf](samples/cv_100001.pdf), a synthetic CV)
+→ name, phone, address, region and specialisations are filled in.
+
+> **If Manny answers "not available right now"**: the web app calls Manny's serving endpoint with a Databricks token,
+> and student accounts in this workspace can only obtain 1-hour tokens (personal access tokens are disabled). Everything
+> else keeps working. A workspace admin can set a longer one in two minutes, see
+> [Databricks token for Manny](#databricks-token-for-manny).
+
+The longer walkthrough, covering every feature, is [below](#full-manual-test-walkthrough).
+
+---
+
+## Rubric map
+
+Every claim links to code or to an exported measurement in [`evidence/`](evidence/) (regenerate with
+`python evidence/export_evidence.py`).
+
+| Criterion (points) | What is built | Evidence |
+|---|---|---|
+| **Spark data pipeline** (15) | Job `maintops_pipeline`: raw JSON export with injected defects → Auto Loader bronze → silver with **18 validation rules** and a quarantine table with reason codes → gold scorecards (success rate, rating, resolution time, **hourly rate from billed jobs**), review sentiment (`ai_analyze_sentiment`) and summaries (`ai_query`) → upsert to Lakebase. Idempotent: checkpoints, MERGE, caches, `force=true` rebuilds; every step logs counts and checks, a failed check stops the job. | [evidence/pipeline.md](evidence/pipeline.md): 1,004,842 raw → **979,490 valid + 20,510 quarantined** (8 reasons), all checks passed; code [pipeline/](pipeline/), logic in [pipeline_lib.py](pipeline/pipeline_lib.py) |
+| **Third-party API** (10) | Geoapify geocoding (sign-up, CV, profile), Route Matrix (handymen with a car) and Routing API public transport (handymen without one). Key from env/secret scope, retries with backoff on 429/5xx (`Retry-After`), response validation, a flagged fallback estimate, every call logged | [maintops_core/geo.py](maintops_core/geo.py), unit tests with mocked HTTP in [tests/](tests/); [evidence/analytics.md](evidence/analytics.md): 1,949 calls, 0 failures in routing |
+| **Lakebase data model** (15) | 7 tables: users, handyman details, incidents, trips, app events, two scorecard tables. PK/FK everywhere, **30 CHECK constraints**, triggers (`updated_at`, handyman role), 21 indexes, duplicate-incident guard, audit timestamps; 6 idempotent migrations with a dry-run mode | [evidence/lakebase.md](evidence/lakebase.md) (exported from `pg_catalog`), [sqls/](sqls/) |
+| **Agent: retrieval** (6) | 8 read tools over Lakebase, Vector Search (FAQ) and the Spark-built scorecards; `find_handymen` combines Lakebase, Delta-derived features and Geoapify | [Manny](#manny-the-action-taking-agent), [agent/manny.py](agent/manny.py) |
+| **Agent: write actions** (8) | 5 write tools: create incident, assign handyman, cancel, rate, update job status (with hours and amount). Identity from the server only, explicit confirmation before every consequential write, a guard that refuses a write when the user's "yes" changes a detail, validation in the service layer and the database | [evidence/analytics.md](evidence/analytics.md) (write actions), [evidence/agent.md](evidence/agent.md) (refusals by rule) |
+| **Agent: quality** (6) | Release gate: 63 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
+| **Analytics pipeline** (10) | Lakebase **Change Data Feed** → Lakeflow **Declarative Pipeline** `maintops_analytics` (2 streaming tables, 9 materialized views, expectations), refreshed every 30 min | [evidence/analytics.md](evidence/analytics.md), [pipeline/analytics/](pipeline/analytics/) |
+| **Frontend and workflow** (10) | Role-specific dashboards, chat widget with candidate cards and "Choose", live dashboard updates, confirmations, loading and error states, CV sign-up, trips with ETA, ratings | [walkthrough](#full-manual-test-walkthrough), [templates/](templates/) |
+| **Deployment** (5) | Render, auto-deploy on push, health check, secrets in the dashboard; Databricks side as one Asset Bundle | https://maintops-h3bv.onrender.com, [render.yaml](render.yaml), [databricks.yml](databricks.yml), [Run it yourself](#run-it-yourself) |
+| **Big Data: Volume** | 1,000,000 incidents through the distributed pipeline, clustered Delta tables | [evidence/pipeline.md](evidence/pipeline.md) |
+| **Big Data: Velocity** | Structured Streaming on Lakebase CDF, checkpointed, latency measured per batch | [evidence/latency.md](evidence/latency.md): burst of 1,000 reviews in **37.1 s**, 93.7 % of normal batches fully under 60 s |
+| **Big Data: Variety** | 10,000 CV PDFs → `ai_parse_document` → profile fields; FAQ PDF → chunks → embeddings → Vector Search; review texts → sentiment and summaries | [evidence/variety.md](evidence/variety.md): 10,000/10,000 parsed, hit@3 = 12/12 |
+
+---
+
+## What MaintOps does
+
+**The problem.** Finding a reliable handyman fast is guesswork: who is qualified for *this* problem, who is good at
+it, who is free, and who can actually get here soon? MaintOps answers that from data, and keeps the client in control
+of the choice.
+
+**The core loop**
+
+```mermaid
+flowchart LR
+    A["Client describes<br/>the problem to Manny"] --> B["Manny classifies it<br/>(type, urgency, skills)<br/>and logs the incident"]
+    B --> C["find_handymen ranks<br/>nearby specialists"]
+    C --> D["Client chooses<br/>one of three"]
+    D --> E["Handyman sets off<br/>(client sees ETA),<br/>works, completes<br/>with hours + amount"]
+    E --> F["Client rates<br/>and reviews"]
+    F --> G["Live stream updates<br/>the handyman's scorecard<br/>and hourly rate &lt; 1 min"]
+    G --> C
+```
+
+**Product rules (built into the code, not the prompt):** the LLM only understands language; ranking, distances,
+prices and every write are deterministic code. The client always makes the final choice. Nothing is written without
+the user's explicit "yes". MaintOps is not an emergency service: for gas, fire, flooding or electrical danger Manny
+first tells the user to call 112.
+
+**Every feature, by user**
+
+- **Visitor:** landing page, Manny answers questions from the user guide (RAG), sign-up as client or handyman.
+- **Client:** report a problem in plain words; see three ranked handymen with match %, success on similar jobs,
+  rating, travel time by car or public transport, hourly rate and a review summary; choose one (cards or chat);
+  follow the handyman's trip ("set off at 14:05 · ~28 min by public transport · expected around 14:33"); cancel;
+  see hours and amount paid; rate and review; the dashboard updates live after each action.
+- **Handyman:** sign up with a CV (fields filled in from the PDF); dashboard with jobs completed, rating and hourly
+  rate; job list by urgency; "I'm on my way" (from home, the last job or another address; car or public transport
+  if they have a car); start and complete jobs with hours and amount; ask Manny about their feedback ("worst
+  reviews", "weakest side") and get the pattern plus one practical tip.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Render["Render (web)"]
+        UI["Flask app<br/>dashboards, chat widget, CV upload"]
+    end
+    subgraph DBX["Databricks"]
+        Manny["Manny agent<br/>Model Serving (MLflow ResponsesAgent)<br/>Claude Sonnet 4.6"]
+        VS["Vector Search<br/>faq_index"]
+        WH["SQL warehouse<br/>ai_parse_document"]
+        Vol["UC Volume<br/>CV PDFs, raw exports"]
+        Batch["Spark batch<br/>10–16"]
+        Live["Spark streaming<br/>20_live_stream"]
+        DLT["Declarative Pipeline<br/>maintops_analytics"]
+        Delta[("Delta / Unity Catalog<br/>1M history, silver, gold,<br/>lb_*_history, analytics")]
+    end
+    LB[("Lakebase Postgres<br/>users, incidents, trips,<br/>scorecards, app_events")]
+    Geo["Geoapify<br/>geocoding, routing"]
+
+    UI -- "chat, actions" --> Manny
+    UI -- "reads / writes" --> LB
+    UI -- "CV upload" --> Vol --> WH
+    UI -- geocode --> Geo
+    Manny -- tools --> LB
+    Manny -- search_faq --> VS
+    Manny -- travel times --> Geo
+    LB -- "Change Data Feed (~15 s)" --> Delta
+    Delta --> Live -- "scorecards, hourly rates (< 1 min)" --> LB
+    Delta --> DLT --> Delta
+    Delta --> Batch -- "scorecards" --> LB
+```
+
+| Layer | Technology |
+|---|---|
+| Web app | Flask, Flask-Login, Flask-WTF (CSRF), Argon2id passwords, gunicorn on Render |
+| Agent | MLflow `ResponsesAgent` registered in Unity Catalog (`bootcamp_students.maintops.manny`), served with `agents.deploy`, tracing and inference table; LLM `databricks-claude-sonnet-4-6` |
+| Operational store | Lakebase (Postgres), autoscaling 0.5–2 CU, connection pool with pre-ping |
+| Change data | Lakebase Change Data Feed → `lb_*_history` Delta tables |
+| Pipelines | Spark (Auto Loader, Delta MERGE, Structured Streaming), AI functions, Lakeflow Declarative Pipelines |
+| Retrieval | Vector Search endpoint `maintops_vs`, embeddings `databricks-gte-large-en` |
+| Deployment | Databricks Asset Bundle (all jobs and the pipeline), Render (web) |
+
+---
+
+## Manny, the action-taking agent
+
+One agent (`agent/manny.py`) does all AI work: visitor questions, the client's incidents, the handyman's jobs and CV
+extraction at sign-up. The server decides the user's role and id; the browser cannot change them.
+
+| Role | Read tools | Write tools |
+|---|---|---|
+| Visitor | `search_faq` (Vector Search over the user guide) | – |
+| Client | `search_faq`, `get_my_incidents`, `get_incident`, `find_handymen` | `create_incident`, `assign_handyman`, `cancel_incident`, `submit_feedback` |
+| Handyman | `search_faq`, `get_my_jobs`, `get_incident`, `get_my_reviews`, `search_my_reviews`, `get_my_performance` | `update_job_status` (completing needs hours worked and amount paid) |
+
+**Safeguards**
+- **Confirmation before writes:** assign, cancel, rate and job-status changes run only after an explicit "yes" to the
+  exact proposal. If the reply changes a detail ("Yes, but make it 3 stars"), Manny does not act and asks again.
+- **No invented figures:** the hours and amount that set a handyman's hourly rate must be ones the user wrote (a code
+  guard checks them); every number in a reply must come from the tools; a sentence about one handyman may only use that
+  handyman's figures (`maintops_core/grounding.py`, one correction round, then a data-only summary).
+- **Validation everywhere:** the service layer checks ownership and allowed status transitions; the database enforces
+  the same rules with CHECK constraints and triggers. Errors reach the user as plain messages.
+- **Safety:** emergency advice (112) first for gas, fire, flooding or electrical danger; no phone numbers other than
+  112; prompt-injection attempts refused; input length and per-session rate limits.
+- **Observability:** MLflow traces, the inference table, and every request, tool call (with arguments and timing),
+  API call and guardrail decision in `app_events` → analytics.
+
+**Release gate** (`eval/`, job `maintops_manny_deploy`): a new version is registered, deployed to a temporary
+staging endpoint and evaluated with **63 multi-turn scenarios, 3 runs each**, on dedicated test accounts in Lakebase.
+Every check is code, not an LLM's opinion:
+
+| What is checked after every turn | How |
+|---|---|
+| The database is exactly right | the incident, rating, hours, amount or status in Lakebase, and nothing written before an explicit yes |
+| The right tools with the right arguments | from `app_events` |
+| No invented figures | every number in the reply exists in data that user may see; figures about one handyman are that handyman's own |
+| Claims are true | "matches all required skills", "3 of 4 skills", "by car" vs "by public transport", prices per hour |
+| Safety | emergency advice first, no other phone numbers, refusals of other users' data and of injected instructions |
+
+Any failed check blocks the release; only a full pass promotes the version to production (UC alias `production`).
+[evidence/agent.md](evidence/agent.md) lists every gate run, including those that blocked a release, and what they
+caught: an invented gas emergency number, a rating saved as 5 after "Yes, 6 stars", figures from one handyman attributed
+to another, a suggested example amount. Each was fixed before release.
+
+**Speed (October 3).** Three optimisations that change no result: a visitor's question is answered after one model
+call instead of two (the guide is searched first), a new incident is matched in the same step instead of an extra model
+round, and travel times are fetched only for candidates who can still reach the top 3 (typically 6 of 20; 200
+randomised tests prove the top 3 is identical). Measured on the staging endpoint with the same 63 scenarios, gate before
+(v23) vs after (v28):
+
+| Request (median) | Before | After |
+|---|---|---|
+| FAQ answer | 4.8 s | **3.6 s** (−26 %) |
+| Report a problem → three ranked handymen | 15.7 s | **12.4 s** (−21 %) |
+| `find_handymen` (incl. Geoapify) | 7.8 s | **5.5 s** |
+| Model input tokens per problem report | 8,367 | **5,757** (−31 %) |
+
+The gate runs two conversations at a time, so a single user sees shorter times than these.
+
+---
+
+## Matching handymen
+
+`find_handymen` (`maintops_core/matching.py`) is deterministic code; the LLM only supplies the incident's type, urgency
+and required skills.
+
+1. **Filter in Lakebase:** active handymen with the specialisation and fewer than 3 active jobs, within 60 km
+   (anywhere if fewer than 3 are found). Index-backed.
+2. **Nearest 20** by straight-line distance.
+3. **Score** each from the Spark-built scorecards: skill match (share of required skills), success on similar jobs
+   (Bayesian-smoothed, more weight with experience), feedback (rating + review sentiment), workload, travel time.
+4. **Travel time only where it matters:** real routes by car (Geoapify Route Matrix) or public transport (Routing API)
+   for the candidates who can still reach the top 3.
+5. **Top 3** saved on the incident with the full reasoning (`agent_reasoning`), status `recommended`.
+
+| Factor | Normal | Urgent (high / critical) |
+|---|---|---|
+| Skill match | 35 % | 30 % |
+| Success on similar jobs | 30 % | 25 % |
+| Client feedback | 20 % | 20 % |
+| Current workload | 10 % | 10 % |
+| Travel time | 5 % | **15 %** |
+
+**Hourly rates** come from real jobs: amount paid ÷ hours worked over each handyman's latest 50 billed jobs (weighted by
+hours), recomputed by the batch pipeline and, after every completed job, by the live stream.
+
+---
+
+## Lakebase data model
+
+```mermaid
+erDiagram
+    users ||--o| handyman_details : "is a handyman"
+    users ||--o{ incidents : "reports (client)"
+    users ||--o{ incidents : "works on (handyman)"
+    incidents ||--o| incident_trips : "trip to the client"
+    users ||--o{ handyman_performance : "scorecard per job type"
+    users ||--o| handyman_feedback : "sentiment + summary"
+    users ||--o{ app_events : "requests, tool calls"
+    incidents ||--o{ app_events : "about"
+```
+
+| Table | Holds | Key rules |
+|---|---|---|
+| `users` | every account, address, coordinates, `is_active` | unique email (case-insensitive), coordinates in range |
+| `handyman_details` | specialisations and skills (`TEXT[]`), experience, CV path and text, car, rating, jobs, hourly rate | PK/FK `user_id`; trigger: must be a handyman; specialisations from a fixed list of 10 |
+| `incidents` | description, type, urgency, required skills, status, handyman, recommendations + reasoning, rating, review, hours worked, amount paid, timestamps | lifecycle `open → recommended → assigned → in_progress → completed` (or `cancelled`); handyman required once assigned; nobody assigns themselves; timestamps in order; rating only on completed jobs; hours and amount both or neither, completed only; one open copy of the same problem per client |
+| `incident_trips` | "I'm on my way": origin, travel mode, route, departure | one per incident; the client never sees the origin |
+| `handyman_performance`, `handyman_feedback` | scorecards written by the pipelines, read by matching | PK (handyman, type); rates in range |
+| `app_events` | agent requests, tool calls with arguments, API calls, UI actions, guardrail decisions | event type from a fixed set; feeds analytics through CDF |
+
+Every row has `created_at`/`updated_at` (a trigger keeps `updated_at` current) and `REPLICA IDENTITY FULL` for Change
+Data Feed. The app never deletes records: it changes status, `is_active` or upserts. Schema = base DDL in
+[sqls/](sqls/) + 6 idempotent migrations, applied by `python sqls/migrate.py` (`--dry-run` rolls back).
+
+---
+
+## Spark pipelines: batch and real time
+
+**Batch** (job `maintops_pipeline`, steps 10–16, logic in [pipeline_lib.py](pipeline/pipeline_lib.py)):
+
+| Step | What it does |
+|---|---|
+| 10 Export raw | The 1M history as JSON, with realistic dirt injected deterministically: ~2 % fixable noise, ~2 % defects (duplicates, empty descriptions, invalid urgency, negative distances, unreadable dates, ratings of 7, negative hours, payments on unfinished jobs) |
+| 11 Bronze | Auto Loader, every field as text, unexpected fields kept, source file recorded; checkpointed |
+| 12 Silver | Types, repairs, **18 rules**; violations → `quarantine_incidents` with reason codes; MERGE with one row per incident (newer never overwritten by older) |
+| 13 Gold performance | Per handyman × job type and overall: completed, cancelled, active, success rate, rating, resolution time, travel time, billed hours and amount, **hourly rate** |
+| 14 Gold feedback | `ai_analyze_sentiment` (cached per distinct text), `ai_query` 25-word summaries for handymen with new reviews |
+| 15 Sync | Upsert scorecards to Lakebase, keep `handyman_details` (jobs, rating, hourly rate) consistent |
+| 16 Parse CVs | `ai_parse_document` over 10,000 PDFs, incremental |
+
+**Real time** (job `maintops_live`, [20_live_stream](pipeline/20_live_stream.ipynb)): Structured Streaming on the
+Lakebase CDF history table. Each micro-batch merges the changed incidents into silver, recomputes the scorecards of
+only the affected handymen and pushes them to Lakebase first, then does the Delta bookkeeping and records the
+latency. Checkpointed: a stopped stream catches up on everything when restarted. Started on demand (it runs compute
+continuously).
+
+**Measured:** [evidence/pipeline.md](evidence/pipeline.md), [evidence/latency.md](evidence/latency.md).
+
+---
+
+## Analytics pipeline
+
+Lakeflow Declarative Pipeline `maintops_analytics` ([code](pipeline/analytics/maintops_analytics.py)), refreshed every
+30 minutes by a job. Two streaming tables read the Lakebase CDF history incrementally (`analytics_events`,
+`analytics_incident_changes`, with expectations that drop or count bad rows); nine materialized views answer:
+
+| Table | Question |
+|---|---|
+| `analytics_agent_requests_hourly` | requests per hour and role, latency, tokens, estimated cost |
+| `analytics_tool_usage` | calls, success rate and latency per tool |
+| `analytics_write_actions` | writes by action, channel (agent / UI) and user |
+| `analytics_api_usage_daily` | Geoapify calls, failures, p95 latency |
+| `analytics_guardrails_daily` | emergencies, injections, figure corrections, rate limits |
+| `analytics_feature_usage` | most-used features |
+| `analytics_incident_activity_daily` | incident creation, updates and deletions per day and status |
+| `analytics_recommendation_rank` | which of the three recommendations clients choose |
+| `analytics_billing_monthly` | completed jobs, hours, amount paid and hourly rate per month and job type |
+
+Output: [evidence/analytics.md](evidence/analytics.md).
+
+---
+
+## Third-party API: Geoapify
+
+| Use | API | Where |
+|---|---|---|
+| Address → coordinates, region and country (sign-up, CV, profile) | Geocoding | `geo.geocode` |
+| Travel time by car, many handymen in one request | Route Matrix | `geo.route_matrix` |
+| Travel time by public transport (handymen without a car, or who choose it for a trip) | Routing, `approximated_transit` | `geo.transit_times`, 4 in parallel (free plan: 5 requests/s) |
+
+Key from the environment or the `maintops` secret scope; retries with backoff on 429/5xx honouring `Retry-After`;
+responses validated (coordinates, confidence, missing pairs); if routing fails, a straight-line estimate flagged
+`estimated` (shown as "rough estimate"); every call logged with latency and errors. Unit-tested with mocked HTTP.
+
+---
+
+## Run it yourself
+
+### The deployed app
+https://maintops-h3bv.onrender.com (Render, auto-deploys every push to `main`). Settings in the Render dashboard:
+`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `DATABRICKS_WAREHOUSE_ID`, `FLASK_SECRET_KEY`, `GEOAPIFY_API_KEY`,
+`LAKEBASE_PG_URL`, `MANNY_ENDPOINT` (`maintops-manny`); [render.yaml](render.yaml) documents them.
+
+### Databricks token for Manny
+The web app calls Manny's endpoint with `DATABRICKS_TOKEN`. Student accounts cannot create personal access tokens and
+their OAuth tokens expire after 1 hour, so Manny (and CV upload) answer only while a fresh token is set; everything
+else works without it. To assess with Manny, a workspace admin can set a longer token:
+
+```bash
+# 8-hour token (needs CAN QUERY on maintops-manny); or: workspace Settings → Developer → Access tokens
+databricks tokens create --lifetime-seconds 28800 --comment "MaintOps assessment" -p <profile>
+# Render dashboard → service "maintops" → Environment → DATABRICKS_TOKEN = <token_value> → Save (redeploys in ~1 min)
+```
+
+A 1-hour token from any account with access: `databricks auth token --force-refresh -p <profile>` (field
+`access_token`).
+
+### Locally
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env            # fill in the 7 settings
+set -a; . ./.env; set +a
+flask --app app run --debug     # http://127.0.0.1:5000
+.venv/bin/python -m pytest -q   # 275 unit tests, no network or database
+uvx ruff check .                # lint
+```
+
+### Databricks side
+```bash
+databricks bundle deploy -p <profile>                                  # every job and the analytics pipeline
+databricks bundle run maintops_pipeline -p <profile>                   # batch pipeline (--params force=true rebuilds)
+databricks bundle run maintops_live --params max_minutes=480 -p <profile> --no-wait   # live stream for 8 h
+databricks bundle run maintops_manny_deploy -p <profile>               # new Manny version through the release gate
+python sqls/migrate.py --dry-run                                       # schema migrations (then without --dry-run)
+python evidence/export_evidence.py                                     # regenerate evidence/*.md
+```
+
+Jobs in [databricks.yml](databricks.yml): `maintops_rag` (FAQ index), `maintops_synth` (synthetic data and Lakebase
+load), `maintops_pipeline`, `maintops_live`, `maintops_manny_deploy`, `maintops_analytics_refresh` (every 30 min),
+`maintops_vs_keepalive` (every 4 h).
+
+---
+
+## Full manual test walkthrough
+
+Start the live stream first if you want to see scorecards and hourly rates update (command above). Password for every
+account: `MaintOps!2026`.
+
+1. **Visitor:** ask Manny "How do I report a problem?" (answer from the guide) and "How much does MaintOps cost?" (says
+   pricing is not defined; invents no prices).
+2. **Handyman sign-up with a CV:** upload [samples/cv_100001.pdf](samples/cv_100001.pdf) → Klaus Wolf, +49 179 5812847, Krefelder Weg 16, 22419
+   Hamburg, region Hamburg, Germany, heating/HVAC, plumbing, electrical. Change the email and submit.
+3. **Client `thomaskoch37@example.com`:** "My kitchen tap is leaking" → 3 cards → Choose → confirm → assigned, list
+   updates live. Cancel it → confirm → cancelled.
+4. **Handyman `ute.wisniewski15@example.net`, job #981034:** I'm on my way by public transport, then by car (shorter);
+   another address "Alexanderplatz 1, 10178 Berlin". As `sergejhartmann66@example.com` the job shows the expected
+   arrival, never Ute's starting point. Back as Ute: Start job; Mark completed with 1 h and €500 → refused ("€500.00 per
+   hour; rates between €10 and €300…"); with 2.5 h and €135 → confirmation shows €54.00 per hour → completed.
+   `nina.mayer79@example.org` (no car): I'm on my way offers public transport only.
+5. **Ratings:** Sergej rates #981034. `bernd.wolf@example.net`: "Rate job 744760 5 stars" → "Yes, but make it 3 stars"
+   → Manny asks again → "Yes" → 3 stars.
+6. **Handyman insights (Ute):** "Worst feedback" → list + recurring complaint; "My weakest side" → job type + one tip.
+7. **Completing through Manny (Nina, #632296):** "Job 632296 is finished." → asks for hours and amount → "I worked 3
+   hours at my usual rate." → asks for the amount instead of working one out → "The client paid €210." → confirmation →
+   "Yes." → shows 3 h · €210.00.
+8. **Errors:** wrong password; ask about someone else's incident ("not found"); an expired token makes Manny say "not
+   available" (see [the token note](#databricks-token-for-manny)).
+
+---
 
 ## Repository layout
 
 ```
-app.py                  Flask app: routes, auth, /api/manny proxy, dashboard actions, CV upload
-maintops_core/          services shared by the app and the agent
-  incidents.py          incident lifecycle with ownership + transition checks
-  matching.py           find_handymen: filter → pre-filter → Geoapify → deterministic score → top 3
-  geo.py                Geoapify geocoding, route matrix (car) and transit routing (no car); retries, validation, flagged fallback
-  rag.py                FAQ vector search
-  events.py             app_events logging (→ CDF → analytics)
-agent/
-  manny.py              the Manny agent (tools, guardrails, tracing)
-  deploy_manny.ipynb    log → register in UC → staging endpoint → eval gate → agents.deploy (production)
-eval/                   end-to-end agent eval and release gate: manny_eval.py (runner), eval_scenarios.py,
-                        eval_checks.py (deterministic checks), eval_fixtures.py (test accounts in Lakebase)
-pipeline/               Spark pipeline (logic in pipeline_lib.py)
-  10–15                 raw export → bronze → silver (+quarantine) → gold → Lakebase
-  16_parse_cvs          ai_parse_document over the CV PDFs
-  20_live_stream        CDF → scorecards in Lakebase (< 1 min)
-  latency_test.py       burst latency test
-  analytics/            Lakeflow Declarative Pipeline (metrics)
-rag/                    FAQ retrieval (RAG): 01 schema → 02 parse FAQ → 03 chunk + index → 05 retrieval eval; 06 keep-alive
+app.py                  Flask app: routes, auth, /api/manny proxy, dashboards, CV upload, trips
+maintops_core/          services shared by the app and Manny
+  incidents.py          incident lifecycle: ownership, transitions, billing validation
+  matching.py           find_handymen: filter → nearest 20 → score → travel only where it matters → top 3
+  geo.py                Geoapify: geocoding, route matrix, public transport; retries, validation, fallback
+  trips.py              "I'm on my way": origin, travel mode, ETA
+  grounding.py          runtime check that a handyman's figures are their own
+  rag.py, events.py, db.py   FAQ search, app_events logging, connection pool
+agent/                  manny.py (the agent) and deploy_manny.ipynb (register → staging → gate → production)
+eval/                   release gate: runner, 63 scenarios, deterministic checks, test-account fixtures
+pipeline/               Spark batch 10–16, live stream 20, latency test, analytics/ (Declarative Pipeline)
+rag/                    FAQ retrieval: parse → chunk + index → retrieval eval; vector-index keep-alive
 data_synthesis/         synthetic data (01–06), Lakebase load (07), billing backfill (08)
-sqls/                   base DDL + migrations/ (applied by migrate.py)
-tests/                  unit tests (pytest)
-pyproject.toml          tool config: ruff (lint) and pytest
-.env.example            template for the local .env (all settings, no secrets)
+sqls/                   base DDL + migrations/ (migrate.py)
+evidence/               exported measurements + export_evidence.py
+tests/                  275 unit tests (pytest)
+templates/, static/     Jinja templates (dashboards, chat widget) and one stylesheet
 databricks.yml          Asset Bundle: all jobs and the analytics pipeline
-render.yaml             deployment config (Render)
-requirements.txt        App dependencies
-requirements-notebooks.txt  Local notebook dependencies (Databricks Connect)
-```
-
-## Running the app locally
-
-Requires Python 3.12 and a reachable Lakebase (Postgres) instance.
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env          # then fill in the values (see "Environment variables")
-set -a; . ./.env; set +a
-flask --app app run --debug
-```
-
-The app is served at http://127.0.0.1:5000.
-
-### Environment variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `FLASK_SECRET_KEY` | yes (prod) | Session/CSRF signing key. Defaults to an insecure dev value. |
-| `LAKEBASE_PG_URL` | yes | Postgres connection string for Lakebase (see `maintops_core/db.py`). |
-| `DATABRICKS_HOST` | yes | Workspace URL (Manny endpoint, CV parsing). |
-| `DATABRICKS_TOKEN` | yes | PAT or OAuth token (only the backend holds it). |
-| `MANNY_ENDPOINT` | no | Manny serving endpoint; defaults to `maintops-manny`. |
-| `DATABRICKS_WAREHOUSE_ID` | for CV upload | SQL warehouse that runs `ai_parse_document`. |
-| `GEOAPIFY_API_KEY` | yes | Geoapify key (geocoding on registration / address change). |
-
-On Databricks the agent endpoint and jobs read `LAKEBASE_PG_URL` and `GEOAPIFY_API_KEY` from the secret scope `maintops`.
-
-## Deployment
-
-- **Render (graded):** live at **https://maintops-h3bv.onrender.com** (free instance: the first request after a quiet period can take about 50 s). `render.yaml` runs gunicorn with a `/healthz` health check; every push to `main` deploys automatically. `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `LAKEBASE_PG_URL`, `GEOAPIFY_API_KEY`, `MANNY_ENDPOINT` (`maintops-manny`) and `DATABRICKS_WAREHOUSE_ID` are set in the Render dashboard (`sync: false`); the service was created in the dashboard, so `render.yaml` documents them rather than setting them.
-- **Databricks side:** `databricks bundle deploy -p <profile>` deploys every job and the analytics pipeline (`databricks.yml`); `databricks bundle run maintops_manny_deploy` (re)deploys Manny; `python sqls/migrate.py` applies schema migrations.
-
-### Databricks token for Manny (for instructors)
-
-The web app calls Manny (Model Serving endpoint `maintops-manny`) with `DATABRICKS_HOST` + `DATABRICKS_TOKEN`. Student
-accounts in the bootcamp workspace cannot create personal access tokens, and a student's CLI OAuth token expires after
-1 hour, so on the Render deployment Manny only answers while a fresh token is set. Everything else (login, dashboards,
-recommendations shown on cards, ratings, job status, "I'm on my way" trips, Geoapify routing) works without it; CV upload
-at registration also needs the token.
-
-To assess the app with Manny, a workspace admin creates a token for the session (8 hours here) and sets it:
-
-```bash
-# 1. Create an 8-hour token (prints token_value once; the token's owner needs CAN QUERY on maintops-manny)
-databricks tokens create --lifetime-seconds 28800 --comment "MaintOps assessment" -p <your-profile>
-#    Without the CLI: workspace Settings → Developer → Access tokens → Generate new token (lifetime: 1 day)
-
-# 2a. Use it on Render: dashboard → service "maintops" → Environment → DATABRICKS_TOKEN = <token_value> → Save
-#     (Render redeploys in about a minute)
-# 2b. Or run the app locally: put DATABRICKS_HOST, DATABRICKS_TOKEN, LAKEBASE_PG_URL, GEOAPIFY_API_KEY and
-#     FLASK_SECRET_KEY in .env (see "Running the app locally"), then: flask run
-```
-
-Without a personal access token, a 1-hour OAuth token works the same way:
-`databricks auth token --force-refresh -p <your-profile>` (field `access_token`). `--force-refresh` always issues a new
-token with the full hour left; without it the CLI may return a cached one that is about to expire. Demo accounts: see "Synthetic data" below
-(all share the demo password `MaintOps!2026`), e.g. client `thomaskoch37@example.com`, handyman
-`ute.wisniewski15@example.net`.
-
-## Rubric evidence
-
-Measured on 2026-09-28 (tables in `bootcamp_students.maintops` unless noted).
-
-| Area | Evidence |
-|---|---|
-| Spark pipeline | Job `maintops_pipeline`: 1,000,000 incidents → raw JSON with injected defects (1,004,842 rows) → Auto Loader bronze → silver **979,490** clean incidents + **20,510** quarantined with reasons (invalid urgency 5,085 · empty description 4,849 · bad timestamp 3,012 · negative distance 2,936 · rating out of range 2,652 · negative hours worked 1,819 · payment on an unfinished job 157) → 23,164 scorecard rows (incl. each handyman's hourly rate = amount paid ÷ hours worked over the latest 50 billed jobs, copied to `handyman_details.avg_price`) + 9,289 review summaries → Lakebase (re-run with `force=true` on 2026-10-02, all checks passed). Incremental (checkpoints, MERGE); every step logged with checks in `pipeline_runs`. |
-| Third-party API | Geoapify geocoding at registration / address change one batched Route Matrix call per recommendation for handymen with a car and a Routing API call (`approximated_transit`) for each one without a car; retries on 429/5xx with Retry-After, response validation, fallback estimates flagged `estimated`; every call in `app_events` → `analytics_api_usage_daily`. Unit-tested with mocked HTTP (`tests/`). |
-| Lakebase model | 3 core tables + `app_events` + `handyman_performance` / `handyman_feedback`; PK/FK, 15+ CHECK constraints, handyman-role triggers, duplicate-open-incident guard, `updated_at` triggers, indexes; migrations in `sqls/migrations/`. |
-| Agent | Manny (UC model `manny`, endpoint `maintops-manny`): read tools `search_faq`, `get_my_incidents`, `get_incident`, `find_handymen`, `get_my_jobs`, `get_my_reviews`, `search_my_reviews`, `get_my_performance`; write tools `create_incident`, `assign_handyman`, `cancel_incident`, `submit_feedback`, `update_job_status` — explicit confirmation required before assign, cancel, rating and status changes, identity from the server only, every tool call logged with its arguments. Guardrails (injection refusal, emergency advice, argument validation, grounded-number check, per-candidate figure check with one correction round and a data-only fallback (`maintops_core/grounding.py`), confirmation-mismatch guard for ratings, no phone numbers except 112, per-session rate limit), MLflow tracing, inference table `manny_payload` (AI Gateway; usage tracking / gateway rate limits are not available for agent endpoints in this workspace, so usage and cost are tracked via `app_events` → analytics). |
-| Agent evaluation (release gate) | `eval/manny_eval.py`: 63 multi-turn scenarios covering every tool (including completing a job with hours and amount), CV extraction, guardrails, authorization and prompt-injection attempts, each run 3× on dedicated test accounts. Checks are code, not LLM judgement: Lakebase state after every turn (right row, right values, nothing written before an explicit yes), tool calls and arguments (from `app_events`), every figure in a reply grounded in data the user may see (and, in a sentence about one candidate, in that candidate's own data), skill-coverage claims, no phone numbers except 112, emergency advice. One failed check fails the gate. `maintops_manny_deploy` deploys each new version to a temporary staging endpoint, runs the gate there and promotes to production only on a pass (UC alias `production`). Results: MLflow experiment `maintops_manny_eval` + `eval/results/`. LLM judges (no promises, clear failure messages, safety) are reported, not gating. |
-| Analytics | Lakebase CDF → Declarative Pipeline `maintops_analytics` (refreshed every 30 min, expectations): `analytics_agent_requests_hourly` (incl. tokens and estimated cost), `analytics_tool_usage`, `analytics_api_usage_daily`, `analytics_guardrails_daily`, `analytics_write_actions`, `analytics_feature_usage`, `analytics_incident_activity_daily`, `analytics_recommendation_rank`, `analytics_billing_monthly` (completed jobs, hours, amount paid and average hourly rate per month and job type). |
-| Volume | 1M-incident history processed by the Spark pipeline (above). |
-| Velocity | Lakebase write → CDF → stream → scorecards back in Lakebase: burst of **1,000 reviews for 900 handymen fully reflected in 36.8 s** (`pipeline/latency_test.py`); per-batch latency in `latency_metrics`; checkpointed stream (restart-safe). |
-| Variety | 10,000 CV PDFs parsed with `ai_parse_document` (100 % success, `cv_parsed`, text stored in Lakebase); FAQ PDF parsed, chunked and embedded into `faq_index` (retrieval hit@3 = 12/12, `rag_eval_runs`); reviews scored with `ai_analyze_sentiment` and summarised with `ai_query`. |
-
-## Synthetic data (`data_synthesis/`)
-
-Generates realistic data at scale for testing the app and the Spark pipeline: **100,000 client users, 10,000 handymen (users with `is_handyman = true` plus `handyman_details` and PDF CVs) and 1,000,000 incidents**, following the table definitions in `sqls/`. Volumes, table/volume names and the skill taxonomy live in `00_config`, which every other notebook loads via `%run ./00_config`.
-
-Run the notebooks in order on Databricks:
-
-| # | Notebook | Output |
-|---|---|---|
-| 00 | `00_config` | Shared config (not run on its own) |
-| 01 | `01_real_addresses` | Unique real German addresses from OpenStreetMap → `synth_address_pool` |
-| 02 | `02_generate_users` | `synth_users` client rows (same columns as `maintops.users`, `is_handyman = false`) |
-| 03 | `03_generate_handymen` | Handyman rows appended to `synth_users` (`is_handyman = true`), `synth_handyman_details` (same columns as `maintops.handyman_details`), plus `synth_handymen_truth` (hidden quality, structured CV) |
-| 04 | `04_generate_cv_pdfs` | One PDF CV per handyman in the Unity Catalog Volume |
-| 05 | `05_generate_incidents` | `synth_incidents` Delta table (columns of `maintops.incidents`) with Change Data Feed; handyman stats come from the Spark pipeline |
-| 06 | `06_validate` | Read-only PASS/FAIL sanity checks |
-| 07 | `07_load_lakebase` | Loads users, handyman details and the recent incidents (~45k) into Lakebase |
-| 08 | `08_backfill_billing` | Hours worked and amount paid on existing completed incidents (Delta and Lakebase); a no-op after a fresh 05 + 07 |
-
-Notes:
-- Emails use reserved `example.*` domains, and all synthetic users share the demo password defined in `00_config` (Argon2-hashed). Do not reuse it anywhere real.
-- `01` needs outbound internet access to `download.geofabrik.de`. Address data © OpenStreetMap contributors (ODbL).
-- `00_config.py` is generated from `00_config.ipynb` so `%run ./00_config` also works locally; re-export it whenever the notebook changes.
-
-### Running notebooks locally
-
-`requirements-notebooks.txt` lets you run the notebooks from your IDE through Databricks Connect (serverless). It needs Python 3.12 and a configured Databricks profile. Do not install `pyspark` alongside `databricks-connect`; they conflict.
-
-```bash
-pip install -r requirements-notebooks.txt
+render.yaml, .env.example, pyproject.toml, requirements*.txt
 ```
 
 ---
 
-# Design
+## Known limitations and future work
 
-## Workflow and users
+- **Manny on Render needs a token** that a student can only obtain for one hour (see above).
+- **Render free instance** sleeps when idle (first request up to 50 s).
+- **The live stream runs on demand** to save the workspace owner's compute; while stopped, ratings and completed jobs
+  are saved and the scorecards catch up when it restarts.
+- **Shared limits:** the LLM's tokens-per-minute limit is shared with other students, and Lakebase autoscales between
+  0.5 and 2 CU; many simultaneous conversations slow Manny down (it retries and then says it is busy).
+- **Hours and amounts are the handyman's word**; the client sees them but does not confirm them.
+- **Not built:** payment processing, booking a time slot, messaging, coverage outside Germany.
 
-1. A client registers and describes an incident in natural language.
-2. An AI agent determines its type, urgency and required skills.
-3. The system finds suitable handymen by specialisation and skill match, experience and historical performance, client ratings, current workload and travel time (Geoapify).
-4. The best three candidates are returned; the client makes the final choice.
-5. The handyman sees the assigned incident, handles it and marks it completed.
-6. The client leaves a rating and textual feedback, which influences future recommendations.
+**Next: handymen accept assignments.** Today the client's choice assigns the handyman at once. Next, an incident would
+count as assigned only once the handyman accepts it: status `awaiting_acceptance` with a deadline (e.g. 2 h urgent,
+24 h otherwise); on decline or timeout it returns to `recommended`, `find_handymen` reruns without those who declined,
+and the client is notified and chooses again, until someone accepts. A table `assignment_offers` (incident, handyman,
+offered, response, responded) keeps the history and gives an acceptance rate that could also count in matching.
 
-There are three user experiences:
+---
 
-- **Unregistered visitor:** landing page, information about MaintOps, questions to the RAG assistant (Manny), registration.
-- **Registered client:** profile and address; create incidents, see active and past incidents and their status, view recommended handymen and select one, rate completed work and leave feedback.
-- **Handyman:** profile, upload/update CV and see the extracted specialisations/skills/experience; assigned incidents sorted by urgency, mark them in progress / completed, see feedback and statistics.
+## Appendix: design specification
 
-## Capstone requirements
+The original design, kept as the reference for how the system is meant to behave.
 
-| Requirement | MaintOps implementation |
-|---|---|
-| Spark data pipeline | Spark processes the large historical incident dataset and derives handyman-performance features |
-| Third-party API | Geoapify Geocoding and Route Matrix APIs |
-| Lakebase operational model | Current users, handymen and recent incidents |
-| Action-taking AI agent | Agent creates incidents and invokes tools that search/rank handymen |
-| Analytics pipeline | Lakebase CDC → Spark → Delta for historical/analytical data |
-| Frontend | Role-specific application UI |
-| Deployment | Databricks App (also deployed on Render) |
-| High Volume | At least 1,000,000 synthetic historical incidents in Delta |
-| High Variety | Handyman CVs supplied as unstructured PDF/image documents |
-
-## Storage principles
-
-**Lakebase is the operational store.** It holds the latest relational state: who a client is, a handyman's current profile, open incidents, assignments, current workload.
-
-**Unity Catalog / Delta is the historical and analytical store:** the 1M+ synthetic incidents, long-term incident history, historical handyman performance, derived recommendation features and application/agent analytics. Do not load the synthetic history into Lakebase just to demonstrate volume.
-
-**CDC connects them:** Lakebase `incidents` → CDC → Spark → Delta incident history. Lakebase stays authoritative for current state. CDC is replication, not a transactional move, so completed incidents are not deleted from Lakebase immediately; a production version could purge them after e.g. 30 days (optional for the capstone).
-
-**Current vs historical reads:** Lakebase answers "my active incidents", "my assigned jobs", "current status of incident X"; Delta answers "jobs I completed last year" or "this handyman's performance on plumbing". The backend owns this distinction, not the frontend.
-
-| Lakebase | Unity Catalog / Delta |
-|---|---|
-| latest user profile | raw CV files (Volume) |
-| latest handyman profile | parsed/historical CV artifacts |
-| active/recent incidents | 1M+ incident history, completed incidents |
-| | handyman performance features, analytics |
-
-## Lakebase data model
-
-The operational schema is the Postgres schema `maintops` with three tables; the DDL in [`sqls/`](sqls/) is the source of truth.
-
-- **`users`**: every account, clients and handymen alike. Identity `id`, unique `email`, `password_hash`, name, `date_of_birth`, `phone`, address (`house`, `postal_code`, `city`, `state`, `country`), `latitude`/`longitude`, `is_handyman`, `is_active`, `created_at`. Unregistered visitors have no row.
-- **`handyman_details`**: one row per handyman, `user_id` is both primary key and foreign key to `users.id`. Holds `specialisations TEXT[]`, `skills TEXT[]`, `experience_summary`, `cv_path`, `cv_raw_text`, `has_car`, and the performance summary `completed_cases`, `rating_avg` (0–5), `rating_count`, `avg_price` (the handyman's average hourly rate in EUR, shown to clients as €/h: amount paid ÷ hours worked over their latest 50 billed jobs, recomputed by the pipeline and, after each completed job, by the live stream; realistic German rates, e.g. plumbing ~€70/h, heating ~€73/h, painting ~€50/h).
-- **`incidents`**: `reported_by_user_id` (client) and `handyman_user_id` (assigned handyman), both foreign keys to `users.id`; `description`, `incident_type`, `urgency` (`low` / `medium` / `high` / `critical`), `recommended_handyman_ids BIGINT[]`, `agent_reasoning`, `distance_km`, `travel_time_minutes`, `status`, `rating` (1–5), `feedback`, `hours_worked` and `amount_paid_eur` (migration 005: entered by the handyman when completing the job, both or neither and only on completed jobs, 0 < hours ≤ 24, €10–300 per hour; the history was backfilled by `data_synthesis/08_backfill_billing`), and `created_at` / `assigned_at` / `completed_at` / `updated_at`.
-- **`incident_trips`** (migration 004): the handyman's trip to the client, one row per incident (PK/FK `incident_id`). "I'm on my way" on an assigned job records where they set off from (`origin_kind` home / last_job / custom, geocoded address and coordinates), how they travel (`travel_mode`: a handyman with a car chooses car or public transport; without a car it is always public transport and no choice is offered), and the Geoapify route (`distance_km`, `travel_minutes`, `estimated`, `departed_at`). The client's dashboard shows departure time, travel time and expected arrival as an estimate, never the starting address (it may be another client's home). Service: `maintops_core/trips.py`.
+### Storage principles
+**Lakebase is the operational store** (current users, handymen, open incidents, assignments, workload, events).
+**Unity Catalog / Delta is the historical and analytical store** (the 1M history, derived features, analytics, raw
+files). **Change Data Feed connects them:** Lakebase stays authoritative for current state; the history is never
+loaded into Lakebase just to show volume, and completed incidents are not deleted from Lakebase because CDF copied
+them.
 
 ### Specialisations, skills and experience
+Specialisations are a controlled vocabulary of 10 (`plumbing`, `electrical`, `heating_hvac`, `carpentry`, `painting`,
+`roofing`, `flooring`, `appliance_repair`, `locksmith`, `general_maintenance`) used for coarse filtering; CV extraction
+must choose from it. Skills are granular abilities used for job compatibility; the experience summary is CV-derived
+text. Both lists are `TEXT[]` on `handyman_details`.
 
-All three are kept:
+### Authentication and authorization
+Only an Argon2id `password_hash` is stored and verified with the library; passwords are never logged. Clients see only
+their own incidents, handymen only the jobs assigned to them; the agent's identity comes from the server session.
 
-- **Specialisations** are a controlled vocabulary used for coarse filtering: `plumbing`, `electrical`, `heating_hvac`, `carpentry`, `painting`, `roofing`, `flooring`, `appliance_repair`, `locksmith`, `general_maintenance`. CV extraction must choose from this list, never invent categories.
-- **Skills** are granular capabilities (pipe repair, leak detection, boiler maintenance, …) used for specific job compatibility.
-- **`experience_summary`** is richer CV-derived text about the handyman's professional experience.
+### Handyman availability
+Derived from active incidents (`assigned`, `in_progress`), never stored as a flag: fewer active jobs rank higher, 3 or
+more excludes the handyman.
 
-Filtering goes specialisations → skills → historical performance/experience → feedback, workload and travel time → top candidates. Both lists are stored as `TEXT[]`, not separate tables.
+### CV upload and processing
+Synchronous and separate from Spark, since a handyman expects a usable profile right away: the file goes to a Unity
+Catalog Volume, `ai_parse_document` reads it, Manny (`extract_cv`) extracts the profile and address, geocoding adds the
+region and country, and the result is saved on sign-up. Parsing and extraction are separate steps.
 
-## Authentication
+### Synthetic data
+`data_synthesis/` generates 100,000 clients, 10,000 handymen with PDF CVs and 1,000,000 incidents with realistic
+addresses (OpenStreetMap), skills, ratings, reviews and billing, all from `00_config`, with PASS/FAIL validation (`06`)
+and a Lakebase load of the recent slice (`07`). Emails use reserved `example.*` domains; all accounts share the demo
+password. Notebooks also run locally through Databricks Connect (`requirements-notebooks.txt`).
 
-Store only an Argon2id `password_hash` (never plaintext or reversibly encrypted passwords). On login, look the account up by email and verify with the Argon2 library's `verify`; never compare hash strings manually and never log passwords. The encoded hash already contains salt and parameters, so no salt column is needed.
-
-## Geocoding
-
-Clients and handymen give an address at registration. Geoapify forward geocoding turns it into `latitude`/`longitude`, which are stored in `users` so searches never re-geocode. Geocode again only when the address changes. `house` holds street and house number for the MVP.
-
-## Handyman availability
-
-Availability is derived from active incidents (`assigned`, `in_progress`), not stored as an `is_available` flag that could drift out of sync. MVP rule: 0 active incidents = highly available, 1 = available, 2 = busy but available, 3+ = unavailable. The threshold should be configurable, and fewer active incidents should also rank higher.
-
-```sql
-SELECT u.id, u.first_name, u.last_name, COUNT(i.id) AS active_incidents
-FROM maintops.users u
-JOIN maintops.handyman_details h ON h.user_id = u.id
-LEFT JOIN maintops.incidents i
-       ON i.handyman_user_id = u.id
-      AND i.status IN ('assigned', 'in_progress')
-GROUP BY u.id, u.first_name, u.last_name
-HAVING COUNT(i.id) < 3;
-```
-
-## Handyman search and recommendation
-
-The LLM handles semantic understanding; deterministic code handles filtering, routing, scoring and ranking. The LLM never invents scores or scans every handyman.
-
-1. **Classification (agent).** "Water is leaking from a pipe under my kitchen sink" becomes `incident_type = plumbing`, `urgency = high`, `required_skills = [pipe repair, leak detection]`. The agent creates/updates the incident and calls the search tool.
-2. **Candidate filtering (Lakebase)** by specialisation, skills, workload and other operational constraints.
-3. **Geographic pre-filter.** For large candidate sets, compute straight-line (Haversine) distance from stored coordinates and keep the nearest ~20. Never call Geoapify for every handyman.
-4. **Geoapify travel times** for the shortlist, by the handyman's `has_car` flag: handymen with a car get real road distance and driving time from one batched Route Matrix request (mind the API's coordinate order); handymen without a car get a public transport route each from the Routing API (`approximated_transit`, the Route Matrix has no transit mode), up to 4 in parallel. Cards and Manny say "7 min by car" or "35 min by public transport".
-5. **Deterministic scoring** with configurable initial weights:
-
-   | Signal | Weight |
-   |---|---|
-   | Skill / incident match | 35% |
-   | Similar successful cases (from Delta) | 30% |
-   | Historical feedback | 20% |
-   | Current workload | 10% |
-   | Travel time | 5% |
-
-6. **Top 3** are shown; the client selects one.
-
-The agent-facing abstraction is a single tool, `find_handymen(incident_id: int)`, which reads the incident and client coordinates, finds matching non-overloaded handymen, pre-filters geographically, calls the Route Matrix, fetches historical performance features, scores and returns the top three. The LLM does not orchestrate individual SQL queries and HTTP calls.
-
-## Incident lifecycle
-
-`open` → `recommended` → `assigned` → `in_progress` → `completed` (`cancelled` is allowed where appropriate).
-
-1. Client submits a free-text description; the agent determines type and urgency and the incident is created in Lakebase.
-2. The search tool returns three candidates; the client selects one, `handyman_user_id` is set and the status becomes `assigned`.
-3. The handyman sees it among their active jobs. When they set off they tap "I'm on my way" (from home, their last job or another address; by car or public transport if they have a car) and the client sees the expected arrival. They move it to `in_progress` on arrival, then mark it `completed`.
-4. The client provides `rating` and `feedback`.
-5. The outcome flows through CDC into Delta and into future performance features.
-
-## Historical data and Spark
-
-Spark is used for the historical incident dataset, not for the synchronous CV-registration path. Over the 1M+ incidents it cleans and validates records, derives resolution times, aggregates by handyman and incident type, and computes completion/success rates and average ratings. The result is a precomputed handyman performance table (e.g. `handyman_id`, `incident_type`, `jobs_completed`, `successful_jobs`, `average_rating`, `average_resolution_time`) that recommendation queries read; the raw history is never scanned per request.
-
-The Delta history also feeds incident analytics, recommendation-quality analysis and agent cost analytics: requests per user, input/output/total tokens, estimated model cost per request and per user, resolution time, rank of the selected recommendation, handyman rating and recommendation success.
-
-## CV upload and processing
-
-CVs (PDFs and images) are the High Variety component. Processing is synchronous and separate from Spark, since a handyman expects a usable profile right after registering:
-
-1. The original file is stored in a Unity Catalog Volume.
-2. `ai_parse_document` turns it into structured document content.
-3. A separate AI extraction step maps it to specialisations (from the controlled vocabulary), skills and an experience summary.
-4. The latest structured result, `cv_path` and any parsed text the app needs are written to `handyman_details`.
-
-Parsing and extraction are separate steps: parsing does not produce the final profile.
-
-## RAG assistant for visitors
-
-Unregistered visitors can ask Manny questions without an account. The informational documents are parsed, chunked and indexed for vector retrieval (`rag/02`–`03`), and Manny (`agent/manny.py`) answers from them with `search_faq`. It is informational only and needs no user record.
-
-## Feedback loop
-
-Recommendation → client selection → completed work → rating and feedback → historical Delta data → Spark-derived performance → future recommendations. For the MVP the numeric rating feeds performance features directly; textual feedback can later be summarised for richer signals.
-
-## Responsibility boundaries
-
+### Responsibility boundaries
 | Component | Use for | Not for |
 |---|---|---|
-| LLM / agent | understanding descriptions, incident type, urgency, required skills, choosing tools, user-facing explanations | numeric scores, distances, scanning history, comparing thousands of profiles |
-| Deterministic code | SQL filtering, workload, Haversine pre-filter, Geoapify calls, ranking, DB writes, authentication, authorization | |
-| Spark | historical processing, cleaning, aggregation, feature generation, CDC into Delta, analytics | a single CV upload |
-| Lakebase | current users, handyman profiles, current/recent incidents, transactional writes | the 1M+ history |
-| Delta / Unity Catalog | historical incidents, derived features, analytics, raw/unstructured files | |
-| Geoapify | forward geocoding, Route Matrix for shortlisted handymen | |
+| LLM / agent | understanding descriptions, type, urgency, skills, choosing tools, explanations | scores, distances, prices, scanning history |
+| Deterministic code | filtering, workload, distances, Geoapify, ranking, writes, authentication, authorization | |
+| Spark | history: cleaning, aggregation, features, CDF into Delta, analytics | a single CV upload |
+| Lakebase | current state, transactional writes | the 1M history |
+| Delta / Unity Catalog | history, features, analytics, raw files | |
 
-## Implementation rules
-
-Unless the requirements change explicitly:
-
-1. Keep the Lakebase operational schema to the three tables `users`, `handyman_details` and `incidents`.
-2. Do not create separate tables for specialisations or skills; store them as arrays in `handyman_details`.
-3. Treat specialisations as a controlled vocabulary.
-4. Never store plaintext passwords; use `password_hash` with Argon2id.
-5. Never log passwords or secrets. Keep API keys and credentials in environment variables/secrets, never in source code.
-6. Geocode addresses on registration or address change, persist the coordinates, and never re-geocode unchanged addresses.
-7. Derive handyman availability from assigned/in-progress incidents instead of an `is_available` flag.
-8. Filter candidates by specialisation, skills and workload before any routing call; for large sets pre-filter geographically before calling Geoapify.
-9. Batch Geoapify Route Matrix requests rather than one per handyman.
-10. Travel time is a ranking feature, not the dominant criterion.
-11. Ranking scores are calculated by deterministic code; the agent understands language and invokes tools but never invents operational facts.
-12. The client makes the final choice among recommended handymen.
-13. Keep active/current state in Lakebase and high-volume history and analytics in Delta/Unity Catalog; never put the 1M+ synthetic dataset into Lakebase.
-14. Propagate incident changes to Delta through CDC/Spark, and do not delete completed incidents from Lakebase just because CDC copied them.
-15. Use Spark only for workloads that justify it (historical transformation/aggregation, CDC analytics), never per CV upload.
-16. Store raw CV files in a Unity Catalog Volume, parse/extract during registration or update, write the latest result to `handyman_details`, and keep parsing separate from field extraction.
-17. The visitor RAG assistant uses the MaintOps knowledge base and does not require registration.
-18. Parameterise all database access; never build SQL from raw user input.
-19. Enforce authorization in the backend: clients only see their own profile and incidents, handymen only incidents assigned to them unless a workflow explicitly requires otherwise.
-
-## MVP scope
-
-Prioritise a complete working vertical slice over extra normalisation or infrastructure. The MVP is done when it demonstrates:
-
-registration → address geocoding → handyman CV processing → incident creation → AI classification → candidate search → Geoapify routing → top-3 recommendation → client selection → handyman workflow → completion → feedback → CDC / Delta history → Spark historical-performance pipeline.
-
-Keep further sophistication out of the critical path unless the capstone requires it.
+### Implementation rules
+1. Keep the core operational model to `users`, `handyman_details` and `incidents`; supporting tables (trips, events,
+   scorecards) are added only where a feature needs them.
+2. Specialisations and skills are arrays on `handyman_details`, specialisations from the controlled vocabulary.
+3. Never store or log plaintext passwords or secrets; credentials only in environment variables or secret scopes.
+4. Geocode on registration or address change and persist the coordinates.
+5. Derive availability from active incidents.
+6. Filter by specialisation, skills and workload before any routing call; pre-filter geographically; fetch travel
+   times only for candidates who can still reach the top 3, and batch car routes in one Route Matrix request.
+7. Travel time is a ranking feature, not the dominant criterion.
+8. Ranking is deterministic code; the agent never invents operational facts.
+9. The client makes the final choice among the recommended handymen.
+10. Current state in Lakebase, history and analytics in Delta; propagate changes through CDF.
+11. Use Spark only where the volume justifies it.
+12. Parameterise all database access; enforce authorization in the backend.

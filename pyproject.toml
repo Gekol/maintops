@@ -15,6 +15,7 @@ select = ["E", "F", "W", "B", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "pipeline/analytics/maintops_analytics.py" = ["F821"]   # `spark` is provided by the Declarative Pipeline runtime
+"evidence/export_evidence.py" = ["E501"]                 # long lines are SQL, kept readable as written
 
 [tool.ruff.lint.isort]
 known-first-party = ["maintops_core"]
