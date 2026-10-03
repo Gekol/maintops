@@ -787,7 +787,26 @@ def parse_cv():
         return jsonify({"error": "Failed to extract a profile from the CV."}), 502
 
     session["cv_path"] = path    # saved with the account at registration (the cookie can't hold the text)
+    _complete_region(profile)
     return jsonify(profile)
+
+
+def _complete_region(profile: dict) -> None:
+    """State and country the CV leaves out, from geocoding its address, so the form shows them before submit.
+    Values from the CV are kept; if geocoding fails both stay empty (registration geocodes again on save)."""
+    if profile.get("state") and profile.get("country"):
+        return
+    house, postal_code, city = (profile.get(k) or "" for k in ("house", "postal_code", "city"))
+    if not (house and city):
+        return
+    address = ", ".join(p for p in (house, f"{postal_code} {city}".strip(), profile.get("country")) if p)
+    try:
+        loc = geo.geocode(address)
+    except geo.GeoError as exc:
+        app.logger.warning("Geocoding the CV address failed: %s", exc)
+        return
+    profile["state"] = profile.get("state") or loc.get("state") or ""
+    profile["country"] = profile.get("country") or loc.get("country") or ""
 
 
 # ─────────────────────────────────────────────────────────────
