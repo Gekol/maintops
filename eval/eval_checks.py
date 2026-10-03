@@ -89,7 +89,10 @@ def ungrounded_numbers(reply: str, allowed: set[float]) -> list[str]:
 # ─────────────────────────────────────────────────────────────
 _ALL_SKILLS = re.compile(r"\ball\s+(?:(?:the|two|three|four|five|\d)\s+)?"
                          r"(?:(?:required|key|needed|listed)\s+)?skills?\b|"
-                         r"\bevery (?:required |key )?skill", re.I)
+                         r"\bevery (?:required |key )?skill|"
+                         # German: "alle 3 benötigten Skills", "alle erforderlichen Fähigkeiten"
+                         r"\balle\s+(?:(?:zwei|drei|vier|fünf|\d)\s+)?"
+                         r"(?:(?:benötigten|erforderlichen|geforderten|nötigen)\s+)?(?:skills?|fähigkeiten)\b", re.I)
 # "All three match 2 of 4 skills" / "all candidates" / "each of them" = a statement about every candidate
 _THE_OTHERS = re.compile(r"\bthe other (?:two|candidates|ones)\b|\bthe others\b|\bthe rest\b", re.I)
 _ALL_CANDIDATES = re.compile(r"\ball\s+(?:three|3)\b(?!\s+(?:of\s+\d|(?:(?:required|key|needed|listed)\s+)?skills?\b))|"
@@ -97,8 +100,8 @@ _ALL_CANDIDATES = re.compile(r"\ball\s+(?:three|3)\b(?!\s+(?:of\s+\d|(?:(?:requi
                              r"\beach of them|\bevery candidate", re.I)
 _AND_RANK = r"(?:\s*(?:,|and|&)\s*(\d))?"
 _RANKS = re.compile(rf"\b(?:candidates?|options?|numbers?)\s+(\d){_AND_RANK}{_AND_RANK}", re.I)   # "candidates 2 and 3"
-_X_OF_Y = re.compile(r"\b(\d+) of (?:the |your )?(\d+)\b"
-                     r"[^.!?\n]{0,25}\bskills?\b", re.I)
+_X_OF_Y = re.compile(r"\b(\d+) (?:of|von) (?:the |your |den )?(\d+)\b"            # German: "3 von 4 Skills"
+                     r"[^.!?\n]{0,25}\b(?:skills?|fähigkeiten)\b", re.I)
 
 
 # A sentence ends at . ! ? before a space (not the point in "4.51", not "vs." / "e.g." / "i.e." / "approx." / "ca.")
@@ -173,8 +176,9 @@ def skill_claim_errors(reply: str, candidates: list[dict], required_count: int) 
     return errors
 
 
-_BY_CAR = re.compile(r"\bdriv(?:e|es|ing)\b|\bby car\b", re.I)
-_BY_TRANSIT = re.compile(r"public transport|by (?:bus|train|tram|u-bahn|s-bahn|transit)", re.I)
+_BY_CAR = re.compile(r"\bdriv(?:e|es|ing)\b|\bby car\b|\bmit dem (?:auto|wagen)\b|\bautofahrt\b", re.I)
+_BY_TRANSIT = re.compile(r"public transport|by (?:bus|train|tram|u-bahn|s-bahn|transit)|"
+                         r"öffentlich|mit (?:dem bus|der bahn|der u-bahn|der s-bahn|der tram)", re.I)
 
 
 def travel_mode_errors(reply: str, candidates: list[dict]) -> list[str]:
@@ -256,7 +260,8 @@ ARRIVAL_PROMISE = re.compile(
 
 
 _EURO = re.compile(r"€\s?\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s?(?:€|EUR\b|euros?\b)", re.I)
-_HOURLY = re.compile(r"per hour|an hour|/\s?h(?:ou)?r?\b|hourly", re.I)
+_HOURLY = re.compile(r"per hour|an hour|/\s?h(?:ou)?r?\b|hourly|"
+                     r"pro stunde|die stunde|/\s?std\b|stündlich|stundensatz|stundenlohn", re.I)   # German too
 
 
 def prices_without_hourly_unit(reply: str) -> list[str]:

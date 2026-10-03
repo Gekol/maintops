@@ -185,3 +185,16 @@ def test_candidates_referred_to_by_rank():
     assert skill_claim_errors(reply, cands, 4) == []
     assert skill_claim_errors(reply.replace("candidates 2 and 3 each cover 3", "candidate 2 covers 4"), cands, 4)
     assert skill_claim_errors("Jens Schmidt covers 2 of 4, the other two cover 3 of 4 skills.", cands, 4) == []
+
+
+def test_german_replies_are_checked_too():
+    cands = [{"handyman_id": 1, "name": "Ali Wisniewski", "travel_mode": "transit", "matched_skills": ["a", "b"]},
+             {"handyman_id": 2, "name": "Ben Ott", "travel_mode": "drive", "matched_skills": ["a", "b", "c"]}]
+    assert prices_without_hourly_unit("Er liegt bei etwa **€63 pro Stunde**.") == []
+    assert prices_without_hourly_unit("Er ist mit €63 der Günstigste.") == ["€63"]
+    assert travel_mode_errors("Ali Wisniewski ist etwa 28 Minuten mit den Öffentlichen entfernt.", cands) == []
+    assert travel_mode_errors("Ali Wisniewski ist 12 Minuten mit dem Auto entfernt.", cands) == [
+        "Ali Wisniewski has no car but is described as driving"]
+    assert skill_claim_errors("Ali Wisniewski deckt alle 3 benötigten Skills ab.", cands, 3)
+    assert skill_claim_errors("Ben Ott deckt alle 3 benötigten Skills ab.", cands, 3) == []
+    assert skill_claim_errors("Ali Wisniewski deckt 2 von 3 Skills ab.", cands, 3) == []

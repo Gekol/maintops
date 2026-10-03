@@ -5,15 +5,16 @@ plain words to **Manny**, the AI assistant. Manny logs the incident, ranks the t
 track record, reviews, workload and real travel time, and assigns the client's choice. The handyman sets off, works,
 and records the hours and the amount paid. The client's rating flows back into the rankings within a minute.
 
-**Live app: https://maintops-h3bv.onrender.com** · all demo accounts use the password `MaintOps!2026`
+**Live app: https://maintops-h3bv.onrender.com** · all demo accounts use the password `MaintOps!2026` ·
+**2-minute video walkthrough: [docs/maintops_walkthrough.mp4](docs/maintops_walkthrough.mp4)**
 
 | | |
 |---|---|
 | Scale | 1,000,000-incident history (Spark, Delta), 110,000 users and 10,000 handymen with PDF CVs, 44,800 live incidents in Lakebase |
-| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **63 scenarios × 3 runs, ~1,850 checks in code, any failure blocks the release** |
+| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **71 scenarios × 3 runs, ~2,100 checks in code, any failure blocks the release** |
 | Real time | a review → the handyman's scorecard back in Lakebase: **37.1 s for a burst of 1,000 reviews**, median 32.7 s in normal operation |
 | Unstructured | 10,000 CV PDFs parsed (100 %), FAQ retrieval hit@3 = 12/12, review sentiment and summaries with AI functions |
-| Quality | 280 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
+| Quality | 281 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
 
 ---
 
@@ -76,7 +77,7 @@ Every claim links to code or to an exported measurement in [`evidence/`](evidenc
 | **Lakebase data model** (15) | 7 tables: users, handyman details, incidents, trips, app events, two scorecard tables. PK/FK everywhere, **30 CHECK constraints**, triggers (`updated_at`, handyman role), 21 indexes, duplicate-incident guard, audit timestamps; 6 idempotent migrations with a dry-run mode | [evidence/lakebase.md](evidence/lakebase.md) (exported from `pg_catalog`), [sqls/](sqls/) |
 | **Agent: retrieval** (6) | 8 read tools over Lakebase, Vector Search (FAQ) and the Spark-built scorecards; `find_handymen` combines Lakebase, Delta-derived features and Geoapify | [Manny](#manny-the-action-taking-agent), [agent/manny.py](agent/manny.py) |
 | **Agent: write actions** (8) | 5 write tools: create incident, assign handyman, cancel, rate, update job status (with hours and amount). Identity from the server only, explicit confirmation before every consequential write, a guard that refuses a write when the user's "yes" changes a detail, validation in the service layer and the database | [evidence/analytics.md](evidence/analytics.md) (write actions), [evidence/agent.md](evidence/agent.md) (refusals by rule) |
-| **Agent: quality** (6) | Release gate: 63 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, the top pick is the top-ranked candidate, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
+| **Agent: quality** (6) | Release gate: 71 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, the top pick is the top-ranked candidate, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
 | **Analytics pipeline** (10) | Lakebase **Change Data Feed** → Lakeflow **Declarative Pipeline** `maintops_analytics` (2 streaming tables, 9 materialized views, expectations), refreshed every 30 min | [evidence/analytics.md](evidence/analytics.md), [pipeline/analytics/](pipeline/analytics/) |
 | **Frontend and workflow** (10) | Role-specific dashboards, chat widget with candidate cards and "Choose", live dashboard updates, confirmations, loading and error states, CV sign-up, trips with ETA, ratings | [screenshots](#the-app-in-pictures), [walkthrough](#full-manual-test-walkthrough), [templates/](templates/) |
 | **Deployment** (5) | Render, auto-deploy on push, health check, secrets in the dashboard; Databricks side as one Asset Bundle | https://maintops-h3bv.onrender.com, [render.yaml](render.yaml), [databricks.yml](databricks.yml), [Run it yourself](#run-it-yourself) |
@@ -87,6 +88,9 @@ Every claim links to code or to an exported measurement in [`evidence/`](evidenc
 ---
 
 ## The app in pictures
+
+A narrated 2-minute walkthrough of the same flows: [docs/maintops_walkthrough.mp4](docs/maintops_walkthrough.mp4)
+(subtitles: [docs/maintops_walkthrough.srt](docs/maintops_walkthrough.srt)).
 
 Captured on 3 October 2026 with headless Chrome from the deployed code (same templates, Lakebase data and production
 Manny endpoint), following the walkthrough below.
@@ -208,7 +212,7 @@ extraction at sign-up. The server decides the user's role and id; the browser ca
   API call and guardrail decision in `app_events` → analytics.
 
 **Release gate** (`eval/`, job `maintops_manny_deploy`): a new version is registered, deployed to a temporary
-staging endpoint and evaluated with **63 multi-turn scenarios, 3 runs each**, on dedicated test accounts in Lakebase.
+staging endpoint and evaluated with **71 multi-turn scenarios, 3 runs each**, on dedicated test accounts in Lakebase.
 Every check is code, not an LLM's opinion:
 
 | What is checked after every turn | How |
@@ -218,6 +222,7 @@ Every check is code, not an LLM's opinion:
 | No invented figures | every number in the reply exists in data that user may see; figures about one handyman are that handyman's own |
 | Claims are true | "matches all required skills", "3 of 4 skills", "by car" vs "by public transport", prices per hour, the "top pick" is the top-ranked candidate |
 | Safety | emergency advice first, no other phone numbers, refusals of other users' data and of injected instructions |
+| Edge cases a tester might try | "how much in total?" (no invented total), "give me his phone number", "the cheapest one", changing your mind mid-confirmation, two problems in one message, a report in German (German replies are checked too), "4.5 stars", "complete all my jobs" |
 
 Any failed check blocks the release; only a full pass promotes the version to production (UC alias `production`).
 [evidence/agent.md](evidence/agent.md) lists every gate run, including those that blocked a release, and what they
@@ -413,7 +418,7 @@ pip install -r requirements.txt
 cp .env.example .env            # fill in the 7 settings
 set -a; . ./.env; set +a
 flask --app app run --debug     # http://127.0.0.1:5000
-.venv/bin/python -m pytest -q   # 280 unit tests, no network or database
+.venv/bin/python -m pytest -q   # 281 unit tests, no network or database
 uvx ruff check .                # lint
 ```
 
@@ -472,15 +477,15 @@ maintops_core/          services shared by the app and Manny
   grounding.py          runtime check that a handyman's figures are their own
   rag.py, events.py, db.py   FAQ search, app_events logging, connection pool
 agent/                  manny.py (the agent) and deploy_manny.ipynb (register → staging → gate → production)
-eval/                   release gate: runner, 63 scenarios, deterministic checks, test-account fixtures
+eval/                   release gate: runner, 71 scenarios, deterministic checks, test-account fixtures
 pipeline/               Spark batch 10–16, live stream 20, latency test, analytics/ (Declarative Pipeline)
 rag/                    FAQ retrieval: parse → chunk + index → retrieval eval; vector-index keep-alive
 data_synthesis/         synthetic data (01–06), Lakebase load (07), billing backfill (08)
 sqls/                   base DDL + migrations/ (migrate.py)
 evidence/               exported measurements + export_evidence.py
-docs/screenshots/       screenshots of the app (README "The app in pictures")
+docs/                   video walkthrough (mp4 + subtitles) and screenshots of the app
 samples/                a synthetic CV for trying the CV sign-up
-tests/                  280 unit tests (pytest)
+tests/                  281 unit tests (pytest)
 templates/, static/     Jinja templates (dashboards, chat widget) and one stylesheet
 databricks.yml          Asset Bundle: all jobs and the analytics pipeline
 render.yaml, .env.example, pyproject.toml, requirements*.txt

@@ -2,7 +2,7 @@
 
 CV PDFs parsed with `ai_parse_document`, the FAQ PDF chunked and embedded for vector search, and review texts scored and summarised with AI functions.
 
-_Exported 2026-10-03 15:09 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-03 17:55 UTC by `evidence/export_evidence.py`._
 
 ## CV PDFs
 

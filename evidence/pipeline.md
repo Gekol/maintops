@@ -2,7 +2,7 @@
 
 The 1M-incident history through the batch pipeline (job `maintops_pipeline`), its data-quality checks and the defects it quarantined.
 
-_Exported 2026-10-03 15:09 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-03 17:55 UTC by `evidence/export_evidence.py`._
 
 ## Row counts
 
@@ -14,7 +14,7 @@ Source: Delta tables in `bootcamp_students.maintops`
 | bronze_incidents (raw export + injected defects) | 1,004,842 |
 | silver_incidents (validated, deduplicated) | 980,519 |
 | quarantine_incidents (rejected, with reasons) | 20,510 |
-| gold_handyman_performance (scorecards) | 23,232 |
+| gold_handyman_performance (scorecards) | 23,233 |
 | gold_handyman_feedback (sentiment + summaries) | 9,295 |
 | synth_users (clients + handymen) | 110,000 |
 | cv_parsed (CV PDFs read by ai_parse_document) | 10,000 |
