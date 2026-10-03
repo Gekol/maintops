@@ -167,7 +167,8 @@ Rules:
 
 PROMPTS = {
     "visitor": _BASE + """
-The user is not logged in. Answer questions about MaintOps with search_faq. To report a problem or hire a
+The user is not logged in. Answer questions about MaintOps with search_faq (the guide has already been searched
+for their latest message; search again only for a different question). To report a problem or hire a
 handyman they must register (Sign up, top right) — you cannot create incidents for visitors.""",
     "client": _BASE + f"""
 The user is a logged-in client. When they describe a maintenance problem:
@@ -179,7 +180,8 @@ The user is a logged-in client. When they describe a maintenance problem:
    such as mounting a TV or shelves, assembling furniture, hanging pictures or resealing), urgency (low = cosmetic / no rush,
    medium = should be fixed this week, high = damage getting worse or an important function lost,
    critical = danger to people or property), and 2–4 specific required_skills.
-3. Call create_incident, then immediately find_handymen with the new incident id.
+3. Call create_incident. MaintOps then runs find_handymen for the new incident automatically and gives you its
+   result; call find_handymen yourself only to refresh the recommendations of an existing incident.
 4. Start by confirming what you did, e.g. “I have logged incident #1000123 (plumbing, high urgency).” The app shows
    the three candidates as cards with all the figures, so do NOT list them again. In 2–4 sentences: name your top
    pick and why (skills, track record on this job type, travel time), mention any recurring complaint from the
@@ -201,7 +203,8 @@ The user is a logged-in handyman. Help them see their jobs (get_my_jobs), detail
 (get_my_reviews), and update job status. Before update_job_status, ask for explicit confirmation and only
 then call it with confirm=true.
 To complete a job you need the hours worked and the amount the client paid (in euros), both as the handyman
-states them — never guess, estimate or calculate them. If either is missing, ask for it before anything else.
+states them — never guess, estimate or calculate them, and never suggest example figures. If either is missing,
+ask for it before anything else.
 Then ask "Shall I mark job #<id> as completed with <hours> h worked and €<amount> paid?" and only after an
 explicit yes call update_job_status with status=completed, hours_worked, amount_paid_eur and confirm=true.
 Questions about their feedback:
@@ -322,6 +325,8 @@ class MannyAgent(ResponsesAgent):
             system += "\nThe latest message may describe an emergency: start your answer with safety advice."
         messages = [{"role": "system", "content": system}] + history
         tools = [TOOLS[n] for n in ROLE_TOOLS[ctx["role"]]]
+        if ctx["role"] == "visitor":           # visitors only ask about MaintOps: search first, answer in one call
+            messages += self._ran_tool("prefetch_faq", "search_faq", {"question": last}, ctx)
 
         for _ in range(MAX_STEPS):
             resp = self._complete(ctx, messages=messages, tools=tools, temperature=0.1, max_tokens=1200)
@@ -350,11 +355,27 @@ class MannyAgent(ResponsesAgent):
                 return reply
             messages.append({"role": "assistant", "content": msg.content or "",
                              "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
+            created = None
             for tc in msg.tool_calls:
                 result = self._run_tool(tc.function.name, tc.function.arguments, ctx)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": json.dumps(result, default=str)[:12000]})
+                if tc.function.name == "create_incident" and isinstance(result, dict) and result.get("id") \
+                        and not result.get("error") and not result.get("needs_confirmation"):
+                    created = result["id"]
+            # A new incident always needs recommendations: match it now instead of in another LLM round
+            if created and not any(tc.function.name == "find_handymen" for tc in msg.tool_calls):
+                messages += self._ran_tool("auto_find_handymen", "find_handymen", {"incident_id": created}, ctx)
         return "Sorry, I couldn't finish that request. Please try again or rephrase it."
+
+    def _ran_tool(self, call_id: str, name: str, args: dict, ctx: dict) -> list[dict]:
+        """Run a tool the conversation always needs next and return it as the tool call + result messages, as if
+        the model had asked for it (logged like any tool call); saves the model a round trip."""
+        raw = json.dumps(args)
+        result = self._run_tool(name, raw, ctx)
+        return [{"role": "assistant", "content": "",
+                 "tool_calls": [{"id": call_id, "type": "function", "function": {"name": name, "arguments": raw}}]},
+                {"role": "tool", "tool_call_id": call_id, "content": json.dumps(result, default=str)[:12000]}]
 
     def _complete(self, ctx: dict, **kwargs):
         """One LLM call, retried with backoff on rate limits and server errors; None = still failing."""

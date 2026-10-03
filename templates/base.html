@@ -184,7 +184,22 @@
         });
         return wrap;
       }
-      window.MannyUI = {format: format, incidentList: incidentList, csrf: CSRF_TOKEN};
+      // After Manny or "Choose" changes something, replace the dashboard's live sections (data-live) with a
+      // fresh copy instead of reloading the page; the chat, its history and anything typed stay as they are.
+      async function refreshDashboard() {
+        const live = document.querySelectorAll('[data-live]');
+        if (!live.length) return;                      // not on the dashboard
+        try {
+          const resp = await fetch(window.location.pathname, {headers: {'Accept': 'text/html'}});
+          if (!resp.ok) return;
+          const fresh = new DOMParser().parseFromString(await resp.text(), 'text/html');
+          live.forEach(function(el) {
+            const next = fresh.getElementById(el.id);
+            if (next) el.replaceWith(next);
+          });
+        } catch (e) { /* the page is still correct after a manual reload */ }
+      }
+      window.MannyUI = {format: format, incidentList: incidentList, csrf: CSRF_TOKEN, refresh: refreshDashboard};
 
       async function assign(incidentId, c, wrap) {
         if (!confirm('Assign ' + c.name + ' to incident #' + incidentId + '?')) return;
@@ -201,6 +216,7 @@
           bubble('assistant', text);
           history.push({role: 'assistant', content: text});
           save();
+          refreshDashboard();
         } catch (e) {
           bubble('assistant', e.message, 'error');
           wrap.querySelectorAll('button').forEach(b => b.disabled = false);
@@ -230,6 +246,8 @@
             msgs.scrollTop = msgs.scrollHeight;
           }
           save();
+          // A write (new incident, assignment, cancellation, rating, job status) or new recommendations
+          if ((data.actions && data.actions.length) || data.candidates) refreshDashboard();
         } catch (e) {
           thinking.remove();
           history.pop();                       // let the user retry the same message

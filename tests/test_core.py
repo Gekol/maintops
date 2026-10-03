@@ -253,3 +253,35 @@ def test_transit_falls_back_to_slower_flagged_estimate(monkeypatch):
     drive = geo.route_matrix([(52.5, 13.4)], (52.52, 13.42))[0]
     assert transit["estimated"] and transit["mode"] == "transit"
     assert transit["travel_minutes"] > drive["travel_minutes"]                     # public transport is slower
+
+
+def _rows(rng, n):
+    """Random candidate rows in _CANDIDATES_SQL column order."""
+    skills_pool = ["pipe repair", "leak detection", "boiler", "tiling", "wiring", "sockets"]
+    return [(i, f"H{i}", "Test", 52.5, 13.4, rng.sample(skills_pool, rng.randint(0, 4)), 50.0, rng.random() < 0.5,
+             rng.randint(0, 2), rng.randint(0, 60), rng.randint(0, 40), None, None, None, rng.randint(0, 200),
+             rng.randint(0, 150), round(rng.uniform(2.5, 5), 2), round(rng.uniform(-1, 1), 2), None, i * 0.7)
+            for i in range(n)]
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_rank_candidates_matches_computing_every_travel_time(seed):
+    """Fetching travel only where it can change the result gives exactly the top 3 of fetching it for all."""
+    import random
+    rng = random.Random(seed)
+    rows = _rows(rng, rng.randint(3, 20))
+    minutes = {r[0]: round(rng.uniform(2, 90), 1) for r in rows}
+    travel = lambda idx: [{"distance_km": 1.0, "travel_minutes": minutes[rows[i][0]],  # noqa: E731
+                           "estimated": False, "mode": "drive"} for i in idx]
+    required = rng.sample(["pipe repair", "leak detection", "boiler", "tiling"], rng.randint(0, 3))
+    weights = matching.URGENT_WEIGHTS if seed % 2 else matching.WEIGHTS
+    lazy, lookups = matching.rank_candidates(rows, required, weights, travel)
+    everything = []
+    for i, r in enumerate(rows):
+        c, base = matching._candidate(r, required, weights)
+        ts = 1 - min(minutes[r[0]] / matching.TRAVEL_ZERO_AT_MIN, 1)
+        everything.append((i, round((base + weights["travel"] * ts) * 100), c["handyman_id"]))
+    everything.sort(key=lambda x: x[1], reverse=True)              # stable: straight-line order on ties
+    expected = [(h, p) for _, p, h in everything[:matching.TOP_N]]
+    assert [(c["handyman_id"], c["match_percent"]) for c in lazy] == expected
+    assert lookups <= len(rows)

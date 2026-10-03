@@ -31,7 +31,7 @@
   <div class="section-title" style="margin-top:2rem;">
     <h2>Your Performance</h2>
   </div>
-  <div class="dash-stats">
+  <div class="dash-stats" id="live-stats" data-live>
     <div class="dash-stat-card">
       <div class="dash-stat-number">{{ hm.completed_cases }}</div>
       <div class="dash-stat-label">Jobs Completed</div>
@@ -67,8 +67,9 @@
     <div id="insights-result" class="insights-result" aria-live="polite" hidden></div>
   </div>
 
-  <!-- Assigned incidents -->
+  <!-- Assigned incidents (refreshed in place after Manny changes a job: data-live) -->
   <div class="section-title"><h2>Your Assigned Jobs</h2></div>
+  <div id="live-jobs" data-live>
   {% if incidents %}
   <div class="dash-incidents">
     {% for inc in incidents %}
@@ -168,6 +169,7 @@
     <p>No jobs assigned yet. New matches will appear here.</p>
   </div>
   {% endif %}
+  </div>
 
   {% else %}
   <!-- ── Client Dashboard ─────────────────────────────────────── -->
@@ -178,8 +180,9 @@
     <a href="{{ url_for('profile') }}" class="btn">👤 Edit Profile</a>
   </div>
 
-  <!-- Client incidents -->
+  <!-- Client incidents (refreshed in place after Manny or "Choose" changes one: data-live) -->
   <div class="section-title"><h2>Your Incidents</h2></div>
+  <div id="live-incidents" data-live>
   {% if incidents %}
   <div class="dash-incidents">
     {% for inc in incidents %}
@@ -241,6 +244,7 @@
     <p>No incidents yet. When something breaks, we've got you covered!</p>
   </div>
   {% endif %}
+  </div>
 
   {% endif %}
 </div>

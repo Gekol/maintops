@@ -67,13 +67,21 @@ RESULTS_DIR = HERE / "results"
 
 
 class EndpointBackend:
+    """The serving endpoint, called once per turn. Not through the SDK client: it resends a request after some
+    errors and timeouts, and a resent turn can act twice (create an incident, then find it already exists)."""
+
     def __init__(self, name: str = ENDPOINT):
         self.name, self.w = name, WorkspaceClient()
         self.label = f"endpoint:{name}"
 
     def __call__(self, messages: list[dict], custom_inputs: dict) -> dict:
-        return self.w.api_client.do("POST", f"/serving-endpoints/{self.name}/invocations",
-                                    body={"input": messages, "custom_inputs": custom_inputs})
+        import requests
+        resp = requests.post(f"{self.w.config.host}/serving-endpoints/{self.name}/invocations",
+                             headers=self.w.config.authenticate(), timeout=CALL_TIMEOUT_S,
+                             json={"input": messages, "custom_inputs": custom_inputs})
+        if resp.status_code != 200:
+            raise RuntimeError(f"endpoint returned {resp.status_code}: {resp.text[:300]}")
+        return resp.json()
 
 
 class ModelBackend:

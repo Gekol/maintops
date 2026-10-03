@@ -21,6 +21,7 @@ from maintops_core.incidents import MAX_ACTIVE_JOBS, ServiceError
 PREFILTER_SIZE = 20
 PREFILTER_RADIUS_KM = 60        # first try handymen within this radius (index-friendly bounding box)
 TOP_N = 3
+TRAVEL_BATCH = 6                # travel times fetched per round (rank_candidates)
 
 # Initial product weights (README); urgent incidents give travel time more weight
 WEIGHTS = {"skill_match": 0.35, "similar_success": 0.30, "feedback": 0.20, "workload": 0.10, "travel": 0.05}
@@ -119,57 +120,18 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
             trade = incident_type.replace("_", " ")
             raise ServiceError(f"No available {trade} specialists found right now.")
 
-        # by car if the handyman has one, otherwise by public transport
-        travel = geo.travel_times([(float(r[3]), float(r[4]), bool(r[7])) for r in rows], (lat, lon),
-                                  user_id=client_id, incident_id=incident_id)
         weights = URGENT_WEIGHTS if urgency in ("high", "critical") else WEIGHTS
-
-        candidates = []
-        for r, t in zip(rows, travel, strict=True):
-            (hid, first, last, _, _, skills, avg_price, has_car, active,
-             t_jobs, t_rated, t_success, t_rate, t_hours, a_jobs, a_rated, a_rating,
-             sentiment, summary, _) = r
-            skill, matched = _skill_score(required or [], skills)
-            t_jobs, t_rated, t_success = t_jobs or 0, t_rated or 0, t_success or 0
-            bayes_success = (t_success + SUCCESS_PRIOR * SUCCESS_PRIOR_WEIGHT) / (t_rated + SUCCESS_PRIOR_WEIGHT)
-            similar = bayes_success * (0.7 + 0.3 * min(t_jobs / EXPERIENCE_FULL_AT, 1))
-            a_rated = a_rated or 0
-            rating = ((float(a_rating or 0) * a_rated + RATING_PRIOR * RATING_PRIOR_WEIGHT)
-                      / (a_rated + RATING_PRIOR_WEIGHT))
-            feedback = 0.7 * (rating - 1) / 4 + 0.3 * ((float(sentiment) + 1) / 2 if sentiment is not None else 0.5)
-            workload = 1 - active / MAX_ACTIVE_JOBS
-            travel_score = 1 - min(t["travel_minutes"] / TRAVEL_ZERO_AT_MIN, 1)
-            factors = {"skill_match": skill, "similar_success": similar, "feedback": feedback,
-                       "workload": workload, "travel": travel_score}
-            score = sum(weights[k] * v for k, v in factors.items())
-            candidates.append({
-                "handyman_id": hid,
-                "name": f"{first} {last}",
-                "match_percent": round(score * 100),
-                "success_rate_percent": round(float(t_rate) * 100) if t_rate is not None else None,
-                "jobs_of_this_type": t_jobs,
-                "avg_resolution_hours": float(t_hours) if t_hours is not None else None,
-                "avg_rating": float(a_rating) if a_rating is not None else None,
-                "rating_count": a_rated,
-                "review_summary": summary,
-                "distance_km": t["distance_km"],
-                "travel_minutes": t["travel_minutes"],
-                "travel_estimated": t["estimated"],
-                "travel_mode": t["mode"],                    # drive | transit (no car)
-                "avg_hourly_rate_eur": float(avg_price) if avg_price is not None else None,   # per hour
-                "active_jobs": active,
-                "has_car": has_car,
-                "matched_skills": matched,
-                "skills_matched": f"{len(matched)} of {len(required)}" if required else None,
-                "factors": {k: round(v, 3) for k, v in factors.items()},
-            })
-
-        candidates.sort(key=lambda c: c["match_percent"], reverse=True)
-        top = candidates[:TOP_N]
+        # travel by car if the handyman has one, otherwise by public transport; only fetched where it can matter
+        sources = [(float(r[3]), float(r[4]), bool(r[7])) for r in rows]
+        top, lookups = rank_candidates(
+            rows, required or [], weights,
+            lambda idx: geo.travel_times([sources[i] for i in idx], (lat, lon),
+                                         user_id=client_id, incident_id=incident_id))
         reasoning = {
             "computed_at": datetime.now(UTC).isoformat(),
             "weights": weights,
-            "considered": len(candidates),
+            "considered": len(rows),
+            "travel_lookups": lookups,
             "candidates": [{k: c[k] for k in ("handyman_id", "match_percent", "distance_km", "travel_minutes",
                                                "travel_estimated", "travel_mode", "factors")} for c in top],
         }
@@ -178,4 +140,79 @@ def find_handymen(client_id: int, incident_id: int) -> dict:
                        WHERE id = %s""", ([c["handyman_id"] for c in top], json.dumps(reasoning), incident_id))
         conn.commit()
     return {"incident_id": incident_id, "incident_type": incident_type, "urgency": urgency,
-            "considered": len(candidates), "candidates": top}
+            "considered": len(rows), "candidates": top}
+
+
+def _candidate(r, required: list, weights: dict) -> tuple[dict, float]:
+    """A candidate without travel (travel_score 0 for now) and its score from every other factor."""
+    (hid, first, last, _, _, skills, avg_price, has_car, active,
+     t_jobs, t_rated, t_success, t_rate, t_hours, a_jobs, a_rated, a_rating,
+     sentiment, summary, _) = r
+    skill, matched = _skill_score(required, skills)
+    t_jobs, t_rated, t_success = t_jobs or 0, t_rated or 0, t_success or 0
+    bayes_success = (t_success + SUCCESS_PRIOR * SUCCESS_PRIOR_WEIGHT) / (t_rated + SUCCESS_PRIOR_WEIGHT)
+    similar = bayes_success * (0.7 + 0.3 * min(t_jobs / EXPERIENCE_FULL_AT, 1))
+    a_rated = a_rated or 0
+    rating = ((float(a_rating or 0) * a_rated + RATING_PRIOR * RATING_PRIOR_WEIGHT)
+              / (a_rated + RATING_PRIOR_WEIGHT))
+    feedback = 0.7 * (rating - 1) / 4 + 0.3 * ((float(sentiment) + 1) / 2 if sentiment is not None else 0.5)
+    workload = 1 - active / MAX_ACTIVE_JOBS
+    factors = {"skill_match": skill, "similar_success": similar, "feedback": feedback, "workload": workload}
+    base = sum(weights[k] * v for k, v in factors.items())
+    return {
+        "handyman_id": hid,
+        "name": f"{first} {last}",
+        "success_rate_percent": round(float(t_rate) * 100) if t_rate is not None else None,
+        "jobs_of_this_type": t_jobs,
+        "avg_resolution_hours": float(t_hours) if t_hours is not None else None,
+        "avg_rating": float(a_rating) if a_rating is not None else None,
+        "rating_count": a_rated,
+        "review_summary": summary,
+        "avg_hourly_rate_eur": float(avg_price) if avg_price is not None else None,   # per hour
+        "active_jobs": active,
+        "has_car": has_car,
+        "matched_skills": matched,
+        "skills_matched": f"{len(matched)} of {len(required)}" if required else None,
+        "factors": factors,
+    }, base
+
+
+def rank_candidates(rows: list, required: list, weights: dict, travel_for) -> tuple[list[dict], int]:
+    """The top TOP_N candidates, fetching travel times only where they can change the result.
+
+    Travel is the only factor that needs an API call, and it adds at most weights["travel"]. So a candidate's
+    best possible match_percent is its score with a perfect travel score. Travel is fetched in batches, best
+    possible score first, until every remaining candidate's best possible match_percent is below the current
+    TOP_N-th one: such a candidate cannot reach the top (round() is monotonic), so the top is exactly the one
+    computing every travel time would give (ties keep the straight-line order, as before).
+    travel_for(indices) → travel dicts for those rows. Returns (top, number of travel lookups).
+    """
+    w_travel = weights["travel"]
+    scored = [_candidate(r, required, weights) for r in rows]
+    best_possible = [round((base + w_travel) * 100) for _, base in scored]
+    order = sorted(range(len(rows)), key=lambda i: best_possible[i], reverse=True)
+    done: dict[int, dict] = {}
+
+    def percent(i: int) -> int:
+        travel_score = 1 - min(done[i]["travel_minutes"] / TRAVEL_ZERO_AT_MIN, 1)
+        return round((scored[i][1] + w_travel * travel_score) * 100)
+
+    pending = order[:TRAVEL_BATCH]
+    while pending:
+        for i, t in zip(pending, travel_for(pending), strict=True):
+            done[i] = t
+        percents = sorted((percent(i) for i in done), reverse=True)
+        bar = percents[TOP_N - 1] if len(percents) >= TOP_N else -1
+        pending = [i for i in order if i not in done and best_possible[i] >= bar][:TRAVEL_BATCH]
+
+    candidates = []
+    for i in sorted(done):                               # straight-line order, so ties break as before
+        c, _ = scored[i]
+        t = done[i]
+        factors = {**c["factors"], "travel": 1 - min(t["travel_minutes"] / TRAVEL_ZERO_AT_MIN, 1)}
+        candidates.append({**c, "match_percent": percent(i), "distance_km": t["distance_km"],
+                           "travel_minutes": t["travel_minutes"], "travel_estimated": t["estimated"],
+                           "travel_mode": t["mode"],                   # drive | transit (no car)
+                           "factors": {k: round(v, 3) for k, v in factors.items()}})
+    candidates.sort(key=lambda c: c["match_percent"], reverse=True)
+    return candidates[:TOP_N], len(done)
