@@ -506,6 +506,21 @@ count as assigned only once the handyman accepts it: status `awaiting_acceptance
 and the client is notified and chooses again, until someone accepts. A table `assignment_offers` (incident, handyman,
 offered, response, responded) keeps the history and gives an acceptance rate that could also count in matching.
 
+**Next: the client confirms the bill.** Hours worked and amount paid stay pending after completion until the client
+accepts them or disputes them; only accepted bills count towards the hourly rate. This closes the "handyman's word"
+limitation above.
+
+**Next: matching weights learned from outcomes.** The five factor weights are set by hand today. Instead, fit them on
+the incident history in Delta: the factors each handyman had at assignment time against the outcome (rating ≥ 4,
+finished on time), separately for normal and urgent incidents. Compare old and new weights on held-out incidents and
+switch only if the top pick does better more often; the weights then live in a Lakebase table, and scoring stays
+deterministic code. Caveats: we only see outcomes for the handymen who were chosen, and on synthetic data the model
+would mostly rediscover the generator.
+
+**Next: archiving old incidents.** Completed incidents stay in Lakebase on purpose (dashboards, ratings, billing).
+As they accumulate, a scheduled job would delete completed and cancelled incidents older than N months once they are
+confirmed in silver, and the live stream would ignore those deletes so Delta keeps the full history.
+
 ---
 
 ## Appendix: design specification
