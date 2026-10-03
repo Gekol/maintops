@@ -5,8 +5,7 @@ plain words to **Manny**, the AI assistant. Manny logs the incident, ranks the t
 track record, reviews, workload and real travel time, and assigns the client's choice. The handyman sets off, works,
 and records the hours and the amount paid. The client's rating flows back into the rankings within a minute.
 
-**Live app: https://maintops-h3bv.onrender.com** · all demo accounts use the password `MaintOps!2026` ·
-**2-minute video walkthrough: [docs/maintops_walkthrough.mp4](docs/maintops_walkthrough.mp4)**
+**Live app: https://maintops-h3bv.onrender.com** · all demo accounts use the password `MaintOps!2026`
 
 | | |
 |---|---|
@@ -88,9 +87,6 @@ Every claim links to code or to an exported measurement in [`evidence/`](evidenc
 ---
 
 ## The app in pictures
-
-A narrated 2-minute walkthrough of the same flows: [docs/maintops_walkthrough.mp4](docs/maintops_walkthrough.mp4)
-(subtitles: [docs/maintops_walkthrough.srt](docs/maintops_walkthrough.srt)).
 
 Captured on 3 October 2026 with headless Chrome from the deployed code (same templates, Lakebase data and production
 Manny endpoint), following the walkthrough below.
@@ -483,7 +479,7 @@ rag/                    FAQ retrieval: parse → chunk + index → retrieval eva
 data_synthesis/         synthetic data (01–06), Lakebase load (07), billing backfill (08)
 sqls/                   base DDL + migrations/ (migrate.py)
 evidence/               exported measurements + export_evidence.py
-docs/                   video walkthrough (mp4 + subtitles) and screenshots of the app
+docs/screenshots/       screenshots of the app (README "The app in pictures")
 samples/                a synthetic CV for trying the CV sign-up
 tests/                  281 unit tests (pytest)
 templates/, static/     Jinja templates (dashboards, chat widget) and one stylesheet
