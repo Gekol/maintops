@@ -30,7 +30,7 @@ from flask_login import (
 )
 from flask_wtf.csrf import CSRFProtect
 
-from maintops_core import geo, trips
+from maintops_core import dbx_auth, geo, trips
 from maintops_core import incidents as inc
 from maintops_core.db import get_connection
 from maintops_core.events import log_event
@@ -124,7 +124,6 @@ def client_required(f):
 # Databricks AI config
 # ─────────────────────────────────────────────────────────────
 DBX_HOST = os.environ.get("DATABRICKS_HOST", "")       # e.g. https://dbc-xxx.cloud.databricks.com
-DBX_TOKEN = os.environ.get("DATABRICKS_TOKEN", "")     # PAT or OAuth token
 MANNY_ENDPOINT = os.environ.get("MANNY_ENDPOINT", "maintops-manny")   # Model Serving endpoint of the agent
 MANNY_URL = "/".join((DBX_HOST, "serving-endpoints", MANNY_ENDPOINT, "invocations"))
 MANNY_MAX_MESSAGES = 20
@@ -815,20 +814,21 @@ def _complete_region(profile: dict) -> None:
 
 
 def _dbx_headers():
-    """Standard auth headers for Databricks REST calls."""
-    return {
-        "Authorization": f"Bearer {DBX_TOKEN}",
-        "Content-Type": "application/json",
-    }
+    """Auth headers for Databricks REST calls (a service principal's self-renewing token, or DATABRICKS_TOKEN)."""
+    return dbx_auth.headers()
 
 
 def _upload_cv(file_bytes: bytes, ext: str) -> str | None:
     """Store the uploaded CV in the Unity Catalog Volume (Files API); returns its Volume path."""
     path = f"{CV_UPLOAD_DIR}/{uuid.uuid4().hex}{ext}"
-    resp = http_requests.put(
-        f"{DBX_HOST}/api/2.0/fs/files{path}", params={"overwrite": "true"}, data=file_bytes, timeout=60,
-        headers={"Authorization": f"Bearer {DBX_TOKEN}", "Content-Type": "application/octet-stream"},
-    )
+    try:
+        resp = http_requests.put(
+            f"{DBX_HOST}/api/2.0/fs/files{path}", params={"overwrite": "true"}, data=file_bytes, timeout=60,
+            headers=dbx_auth.headers("application/octet-stream"),
+        )
+    except http_requests.RequestException as exc:
+        app.logger.error("CV upload failed: %s", exc)
+        return None
     if resp.status_code not in (200, 201, 204):
         app.logger.error("CV upload failed: %s %s", resp.status_code, resp.text[:300])
         return None
@@ -850,20 +850,24 @@ def _parse_document(path: str) -> str | None:
            try_cast(doc:error_status AS STRING) AS error
     FROM parsed
     """
-    resp = http_requests.post(
-        f"{DBX_HOST}/api/2.0/sql/statements", headers=_dbx_headers(), timeout=70,
-        json={"warehouse_id": WAREHOUSE_ID, "statement": sql, "wait_timeout": "50s",
-              "on_wait_timeout": "CONTINUE", "disposition": "INLINE"},
-    )
-    if resp.status_code != 200:
-        app.logger.error("ai_parse_document SQL failed: %s", resp.text[:500])
+    try:
+        resp = http_requests.post(
+            f"{DBX_HOST}/api/2.0/sql/statements", headers=_dbx_headers(), timeout=70,
+            json={"warehouse_id": WAREHOUSE_ID, "statement": sql, "wait_timeout": "50s",
+                  "on_wait_timeout": "CONTINUE", "disposition": "INLINE"},
+        )
+        if resp.status_code != 200:
+            app.logger.error("ai_parse_document SQL failed: %s", resp.text[:500])
+            return None
+        payload = resp.json()
+        deadline = time.time() + 120
+        while payload.get("status", {}).get("state") in ("PENDING", "RUNNING") and time.time() < deadline:
+            time.sleep(3)
+            status_url = "/".join((DBX_HOST, "api/2.0/sql/statements", payload["statement_id"]))
+            payload = http_requests.get(status_url, headers=_dbx_headers(), timeout=30).json()
+    except (http_requests.RequestException, ValueError) as exc:
+        app.logger.error("ai_parse_document request failed: %s", exc)
         return None
-    payload = resp.json()
-    deadline = time.time() + 120
-    while payload.get("status", {}).get("state") in ("PENDING", "RUNNING") and time.time() < deadline:
-        time.sleep(3)
-        status_url = "/".join((DBX_HOST, "api/2.0/sql/statements", payload["statement_id"]))
-        payload = http_requests.get(status_url, headers=_dbx_headers(), timeout=30).json()
     if payload.get("status", {}).get("state") != "SUCCEEDED":
         app.logger.error("ai_parse_document status: %s", payload.get("status"))
         return None

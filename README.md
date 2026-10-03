@@ -13,7 +13,7 @@ and records the hours and the amount paid. The client's rating flows back into t
 | Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **63 scenarios × 3 runs, ~1,850 checks in code, any failure blocks the release** |
 | Real time | a review → the handyman's scorecard back in Lakebase: **37.1 s for a burst of 1,000 reviews**, median 32.7 s in normal operation |
 | Unstructured | 10,000 CV PDFs parsed (100 %), FAQ retrieval hit@3 = 12/12, review sentiment and summaries with AI functions |
-| Quality | 275 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
+| Quality | 280 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
 
 ---
 
@@ -58,7 +58,7 @@ Sign-up with a CV: Sign up → Handyman → upload a CV PDF (sample in the repo:
 > **If Manny answers "not available right now"**: the web app calls Manny's serving endpoint with a Databricks token,
 > and student accounts in this workspace can only obtain 1-hour tokens (personal access tokens are disabled). Everything
 > else keeps working. A workspace admin can set a longer one in two minutes, see
-> [Databricks token for Manny](#databricks-token-for-manny).
+> [Databricks access for the web app](#databricks-access-for-the-web-app-for-the-workspace-admin).
 
 The longer walkthrough, covering every feature, is [below](#full-manual-test-walkthrough).
 
@@ -361,22 +361,50 @@ responses validated (coordinates, confidence, missing pairs); if routing fails, 
 
 ### The deployed app
 https://maintops-h3bv.onrender.com (Render, auto-deploys every push to `main`). Settings in the Render dashboard:
-`DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `DATABRICKS_WAREHOUSE_ID`, `FLASK_SECRET_KEY`, `GEOAPIFY_API_KEY`,
+`DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` (service principal) or `DATABRICKS_TOKEN`, `DATABRICKS_WAREHOUSE_ID`, `FLASK_SECRET_KEY`, `GEOAPIFY_API_KEY`,
 `LAKEBASE_PG_URL`, `MANNY_ENDPOINT` (`maintops-manny`); [render.yaml](render.yaml) documents them.
 
-### Databricks token for Manny
-The web app calls Manny's endpoint with `DATABRICKS_TOKEN`. Student accounts cannot create personal access tokens and
-their OAuth tokens expire after 1 hour, so Manny (and CV upload) answer only while a fresh token is set; everything
-else works without it. To assess with Manny, a workspace admin can set a longer token:
+### Databricks access for the web app (for the workspace admin)
+
+**Why this is needed.** The web app on Render calls three Databricks services: Manny's serving endpoint
+(`maintops-manny`), the Files API (CV upload to a Volume) and a SQL warehouse (`ai_parse_document` on the CV). It
+needs a Databricks credential for that. Student accounts in this workspace cannot create personal access tokens, and a
+student's OAuth token expires after 1 hour, so today the student has to paste a new token into Render every hour, and
+whenever it has expired Manny and CV upload answer "not available" (everything else keeps working). A service
+principal is the standard credential for an application: it is not tied to a person, it can be given only the
+permissions the app needs, and the app (`maintops_core/dbx_auth.py`) uses its client ID and secret to fetch and renew
+its own token, so nothing ever has to be pasted again.
+
+**Option 1, recommended (about 10 minutes, permanent): a service principal for the app**
+1. Settings → Identity and access → Service principals → **Add service principal**, e.g. `maintops-app`.
+2. On the service principal: **Secrets → Generate secret**; note the client ID and the secret (shown once).
+3. Give it only what the app uses:
+   - Serving → `maintops-manny` → Permissions → the service principal → **Can Query**
+   - SQL Warehouses → warehouse `b15d3d6f837ba428` → Permissions → **Can use**
+   - Unity Catalog (SQL editor, use the service principal's application ID):
+     ```sql
+     GRANT USE CATALOG ON CATALOG bootcamp_students TO `<application-id>`;
+     GRANT USE SCHEMA ON SCHEMA bootcamp_students.maintops TO `<application-id>`;
+     GRANT READ VOLUME, WRITE VOLUME ON VOLUME bootcamp_students.maintops.maintops_docs TO `<application-id>`;
+     ```
+4. Send the client ID and secret to the student privately. They go into the Render environment as
+   `DATABRICKS_CLIENT_ID` and `DATABRICKS_CLIENT_SECRET`; no code change or redeploy of Manny is needed.
+
+**Option 2, quick (2 minutes, for the grading session): an 8-hour token**
 
 ```bash
-# 8-hour token (needs CAN QUERY on maintops-manny); or: workspace Settings → Developer → Access tokens
+# needs CAN QUERY on maintops-manny; or: Settings → Developer → Access tokens → Generate new token
 databricks tokens create --lifetime-seconds 28800 --comment "MaintOps assessment" -p <profile>
 # Render dashboard → service "maintops" → Environment → DATABRICKS_TOKEN = <token_value> → Save (redeploys in ~1 min)
 ```
 
-A 1-hour token from any account with access: `databricks auth token --force-refresh -p <profile>` (field
+A 1-hour token from any account with access also works: `databricks auth token --force-refresh -p <profile>` (field
 `access_token`).
+
+**Please keep `maintops-manny` running until grading ends.** It was stopped once (29 September), and the deployed
+app then cannot reach Manny. It runs on one small CPU replica without scale-to-zero, so the first request is not
+delayed by a cold start. An automatic restart was deliberately not built: whether an endpoint an admin stopped should
+run again is the admin's decision.
 
 ### Locally
 ```bash
@@ -385,7 +413,7 @@ pip install -r requirements.txt
 cp .env.example .env            # fill in the 7 settings
 set -a; . ./.env; set +a
 flask --app app run --debug     # http://127.0.0.1:5000
-.venv/bin/python -m pytest -q   # 275 unit tests, no network or database
+.venv/bin/python -m pytest -q   # 280 unit tests, no network or database
 uvx ruff check .                # lint
 ```
 
@@ -428,7 +456,7 @@ account: `MaintOps!2026`.
    hours at my usual rate." → asks for the amount instead of working one out → "The client paid €210." → confirmation →
    "Yes." → shows 3 h · €210.00.
 8. **Errors:** wrong password; ask about someone else's incident ("not found"); an expired token makes Manny say "not
-   available" (see [the token note](#databricks-token-for-manny)).
+   available" (see [Databricks access](#databricks-access-for-the-web-app-for-the-workspace-admin)).
 
 ---
 
@@ -452,7 +480,7 @@ sqls/                   base DDL + migrations/ (migrate.py)
 evidence/               exported measurements + export_evidence.py
 docs/screenshots/       screenshots of the app (README "The app in pictures")
 samples/                a synthetic CV for trying the CV sign-up
-tests/                  275 unit tests (pytest)
+tests/                  280 unit tests (pytest)
 templates/, static/     Jinja templates (dashboards, chat widget) and one stylesheet
 databricks.yml          Asset Bundle: all jobs and the analytics pipeline
 render.yaml, .env.example, pyproject.toml, requirements*.txt
@@ -462,7 +490,7 @@ render.yaml, .env.example, pyproject.toml, requirements*.txt
 
 ## Known limitations and future work
 
-- **Manny on Render needs a token** that a student can only obtain for one hour (see above).
+- **Manny on Render needs a Databricks credential**: until the admin provides a service principal, a student can only set 1-hour tokens (see [Databricks access](#databricks-access-for-the-web-app-for-the-workspace-admin)).
 - **Render free instance** sleeps when idle (first request up to 50 s).
 - **The live stream runs on demand** to save the workspace owner's compute; while stopped, ratings and completed jobs
   are saved and the scorecards catch up when it restarts.

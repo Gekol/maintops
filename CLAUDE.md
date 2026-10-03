@@ -48,14 +48,14 @@ The project is graded against the rubric below; weigh design and implementation 
 - Passwords: Argon2id through the module-level `password_hasher`; verify only with `verify_password()`.
 - Section banners `# ─────`; private helpers prefixed `_`.
 - LLM does semantic understanding only; filtering, scoring, ranking, distances are deterministic code (README rules 8–11).
-- Secrets only from env vars (`FLASK_SECRET_KEY`, `LAKEBASE_PG_URL`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, `MANNY_ENDPOINT`, `DATABRICKS_WAREHOUSE_ID`, `GEOAPIFY_API_KEY`); on Databricks from secret scope `maintops` (`lakebase_pg_url`, `geoapify_api_key`). Locally in git-ignored `.env` (template: `.env.example`).
+- Secrets only from env vars (`FLASK_SECRET_KEY`, `LAKEBASE_PG_URL`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN` or a service principal `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` (`maintops_core/dbx_auth.py` renews its token), `MANNY_ENDPOINT`, `DATABRICKS_WAREHOUSE_ID`, `GEOAPIFY_API_KEY`); on Databricks from secret scope `maintops` (`lakebase_pg_url`, `geoapify_api_key`). Locally in git-ignored `.env` (template: `.env.example`).
 - Notebooks: Databricks-format `.ipynb` (JSON, indent 1, non-ASCII kept). Edit them by loading/dumping JSON with `indent=1, ensure_ascii=False` so diffs stay minimal. `data_synthesis/00_config.py` is a generated copy of `00_config.ipynb` — edit both.
 
 ## Running
 - App: Python 3.12, `.venv` has the app deps; `set -a; . ./.env; set +a` plus `DATABRICKS_HOST`/`DATABRICKS_TOKEN` (`databricks auth token -p george_sokolovsky`), then `flask run --debug`.
 - Schema changes: add `sqls/migrations/00N_*.sql` (idempotent), `python sqls/migrate.py --dry-run`, then without the flag.
 - Notebooks locally: `pip install -r requirements-notebooks.txt` . Never install `pyspark` next to `databricks-connect`.
-- Tests: `.venv/bin/python -m pytest -q` (275 unit tests incl. 200 randomised ranking cases, no DB/network). Lint: `uvx ruff check .` (config in `pyproject.toml`: line length 120; notebooks and the generated `00_config.py` excluded; Manny's prompt strings are exempt from E501 because rewrapping them changes the gated prompt). Keep it passing.
+- Tests: `.venv/bin/python -m pytest -q` (280 unit tests incl. 200 randomised ranking cases, no DB/network). Lint: `uvx ruff check .` (config in `pyproject.toml`: line length 120; notebooks and the generated `00_config.py` excluded; Manny's prompt strings are exempt from E501 because rewrapping them changes the gated prompt). Keep it passing.
 
 ## Status
 See `PLAN.md` for the schedule. Done: RAG (own endpoint `maintops_vs`, hit@3 12/12), synthetic data + Lakebase load, migrations, CDF, batch Spark pipeline, live stream, core services, Manny agent + UC deployment, Manny widget wired to `/api/manny` with candidate cards and "Choose".

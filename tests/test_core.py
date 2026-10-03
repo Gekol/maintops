@@ -4,6 +4,7 @@ Run: .venv/bin/python -m pytest -q tests
 """
 
 import os
+import time
 
 import pytest
 import requests
@@ -285,3 +286,38 @@ def test_rank_candidates_matches_computing_every_travel_time(seed):
     expected = [(h, p) for _, p, h in everything[:matching.TOP_N]]
     assert [(c["handyman_id"], c["match_percent"]) for c in lazy] == expected
     assert lookups <= len(rows)
+
+
+def test_dbx_auth_uses_the_token_without_a_service_principal(monkeypatch):
+    from maintops_core import dbx_auth
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    monkeypatch.setenv("DATABRICKS_TOKEN", "user-token")
+    assert dbx_auth.headers()["Authorization"] == "Bearer user-token"
+
+
+def test_dbx_auth_service_principal_token_is_fetched_once_and_renewed(monkeypatch):
+    from maintops_core import dbx_auth
+    monkeypatch.setenv("DATABRICKS_HOST", "https://dbc.example")
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "sp-id")
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "sp-secret")
+    monkeypatch.setattr(dbx_auth, "_cached", {"token": None, "expires_at": 0.0})
+    calls = []
+
+    def fake_post(url, auth, timeout, data):
+        calls.append((url, auth, data["grant_type"]))
+        return FakeResponse(200, {"access_token": f"t{len(calls)}", "expires_in": 3600})
+    monkeypatch.setattr(dbx_auth.requests, "post", fake_post)
+    assert dbx_auth.bearer() == "t1" and dbx_auth.bearer() == "t1"          # cached
+    assert calls == [("https://dbc.example/oidc/v1/token", ("sp-id", "sp-secret"), "client_credentials")]
+    dbx_auth._cached["expires_at"] = time.time() + 100                     # within the renewal window
+    assert dbx_auth.bearer() == "t2"
+
+
+def test_dbx_auth_failure_is_a_request_error(monkeypatch):
+    from maintops_core import dbx_auth
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "sp-id")
+    monkeypatch.setenv("DATABRICKS_CLIENT_SECRET", "wrong")
+    monkeypatch.setattr(dbx_auth, "_cached", {"token": None, "expires_at": 0.0})
+    monkeypatch.setattr(dbx_auth.requests, "post", lambda *a, **k: FakeResponse(401, {"error": "invalid_client"}))
+    with pytest.raises(requests.RequestException):
+        dbx_auth.bearer()
