@@ -2,7 +2,7 @@
 
 The operational Postgres schema `maintops` as it is deployed: rows, keys, constraints, indexes and triggers.
 
-_Exported 2026-10-03 13:47 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-03 15:09 UTC by `evidence/export_evidence.py`._
 
 ## Tables
 
@@ -10,14 +10,14 @@ Source: `pg_catalog` (row counts are exact)
 
 | table_name | rows | pk | fk | checks | indexes | triggers |
 |---|---|---|---|---|---|---|
-| app_events | 12,843 | 1 | 2 | 2 | 5 | 0 |
-| handyman_details | 10,025 | 1 | 1 | 5 | 3 | 2 |
+| app_events | 14,172 | 1 | 2 | 2 | 5 | 0 |
+| handyman_details | 10,024 | 1 | 1 | 5 | 3 | 2 |
 | handyman_feedback | 9,289 | 1 | 1 | 1 | 1 | 1 |
 | handyman_performance | 23,172 | 1 | 1 | 4 | 1 | 1 |
-| incident_trips | 1 | 1 | 2 | 4 | 2 | 2 |
-| incidents | 44,777 | 1 | 2 | 13 | 5 | 2 |
+| incident_trips | 0 | 1 | 2 | 4 | 2 | 2 |
+| incidents | 44,775 | 1 | 2 | 13 | 5 | 2 |
 | schema_migrations | 6 | 1 | 0 | 0 | 1 | 0 |
-| users | 110,049 | 1 | 0 | 1 | 4 | 1 |
+| users | 110,048 | 1 | 0 | 1 | 4 | 1 |
 
 ## CHECK constraints
 
@@ -62,7 +62,7 @@ Source: `maintops.incidents`
 
 | status | incidents | rated | billed |
 |---|---|---|---|
-| completed | 39,519 | 37,809 | 39,519 |
-| cancelled | 3,658 | 0 | 0 |
+| completed | 39,517 | 37,806 | 39,517 |
+| cancelled | 3,656 | 0 | 0 |
 | in_progress | 1,576 | 0 | 0 |
-| assigned | 24 | 0 | 0 |
+| assigned | 26 | 0 | 0 |

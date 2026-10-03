@@ -2,7 +2,7 @@
 
 The 1M-incident history through the batch pipeline (job `maintops_pipeline`), its data-quality checks and the defects it quarantined.
 
-_Exported 2026-10-03 13:46 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-03 15:09 UTC by `evidence/export_evidence.py`._
 
 ## Row counts
 
@@ -12,9 +12,9 @@ Source: Delta tables in `bootcamp_students.maintops`
 |---|---|
 | synth_incidents (source history) | 1,000,000 |
 | bronze_incidents (raw export + injected defects) | 1,004,842 |
-| silver_incidents (validated, deduplicated) | 980,521 |
+| silver_incidents (validated, deduplicated) | 980,519 |
 | quarantine_incidents (rejected, with reasons) | 20,510 |
-| gold_handyman_performance (scorecards) | 23,231 |
+| gold_handyman_performance (scorecards) | 23,232 |
 | gold_handyman_feedback (sentiment + summaries) | 9,295 |
 | synth_users (clients + handymen) | 110,000 |
 | cv_parsed (CV PDFs read by ai_parse_document) | 10,000 |
@@ -54,8 +54,8 @@ Source: `silver_incidents`: amount paid ÷ hours worked
 
 | incident_type | completed_jobs | hours | eur_per_hour |
 |---|---|---|---|
-| electrical | 238,754 | 716,846 | 67.34 |
-| heating_hvac | 213,690 | 748,288 | 72.61 |
+| electrical | 238,753 | 716,844 | 67.34 |
+| heating_hvac | 213,689 | 748,285 | 72.61 |
 | plumbing | 152,906 | 382,119 | 70.35 |
 | carpentry | 151,113 | 604,042 | 64.08 |
 | painting | 88,425 | 619,308 | 49.86 |

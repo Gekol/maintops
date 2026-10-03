@@ -2,7 +2,7 @@
 
 Every Manny version is evaluated on a temporary staging endpoint (63 multi-turn scenarios × 3 runs, every check in code) and promoted to production only if no check fails.
 
-_Exported 2026-10-03 13:47 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-03 15:09 UTC by `evidence/export_evidence.py`._
 
 ## Release-gate runs
 
@@ -28,6 +28,8 @@ Source: reports of job `maintops_manny_deploy` (`eval/results/` in the deployed 
 | 2026-10-03 11:57 | 63 | 188/189 | 1,821 | 1 | FAIL | job_complete_amount_not_invented: figures_grounded | 946670ed5c634208ad99a5471c1c4c34 |
 | 2026-10-03 13:08 | 63 | 186/189 | 1,804 | 6 | FAIL | report_heating_hvac: agent_responded; report_heating_hvac: one_incident_created; report_electrical: cards_equal_recommendation; report_electrical: three_candida | 4a910bc43931426a9c766b110b96ad54 |
 | 2026-10-03 13:34 | 63 | 189/189 | 1,821 | 0 | PASS | – | 63ea7e35d30a47cbb053fcb1e36f2e82 |
+| 2026-10-03 14:21 | 63 | 188/189 | 1,857 | 1 | FAIL | feedback_confirmed: handyman_rating_count | 757b841b596942b6bc1fb71a3c9158c8 |
+| 2026-10-03 14:44 | 63 | 189/189 | 1,857 | 0 | PASS | – | 8340c593d97c445397e43177c375fc27 |
 
 ## Tool calls (last 7 days)
 
@@ -35,18 +37,18 @@ Source: `maintops.app_events` (every tool call is logged with arguments and timi
 
 | tool | calls | success_pct | median_ms |
 |---|---|---|---|
-| find_handymen | 1,025 | 98.5 | 2,458 |
-| create_incident | 986 | 98.5 | 21 |
-| search_faq | 447 | 100.0 | 253 |
-| get_incident | 420 | 65.2 | 12 |
-| update_job_status | 323 | 53.6 | 18 |
-| get_my_performance | 206 | 99.5 | 22 |
-| cancel_incident | 194 | 66.0 | 15 |
-| search_my_reviews | 162 | 100.0 | 13 |
-| get_my_incidents | 153 | 99.3 | 12 |
-| assign_handyman | 149 | 97.3 | 25 |
-| submit_feedback | 141 | 48.9 | 19 |
-| get_my_jobs | 76 | 100.0 | 12 |
+| find_handymen | 1,125 | 98.7 | 2,780 |
+| create_incident | 1,079 | 98.6 | 21 |
+| search_faq | 497 | 100.0 | 251 |
+| get_incident | 458 | 65.5 | 12 |
+| update_job_status | 353 | 54.1 | 17 |
+| get_my_performance | 224 | 99.6 | 21 |
+| cancel_incident | 212 | 66.0 | 15 |
+| search_my_reviews | 176 | 100.0 | 12 |
+| get_my_incidents | 166 | 99.4 | 12 |
+| assign_handyman | 161 | 97.5 | 25 |
+| submit_feedback | 154 | 48.7 | 19 |
+| get_my_jobs | 82 | 100.0 | 13 |
 
 ## Why write tools were refused (last 7 days)
 
@@ -54,14 +56,14 @@ Source: `maintops.app_events`. Almost all of these come from the evaluation's te
 
 | tool | rule_that_refused | calls | from_eval_accounts |
 |---|---|---|---|
-| cancel_incident | Incident N is 'in_progress' and can no longer be cancelled. | 66 | 66 |
-| submit_feedback | Feedback can only be given once the job is completed. | 61 | 61 |
+| cancel_incident | Incident N is 'in_progress' and can no longer be cancelled. | 72 | 72 |
+| submit_feedback | Feedback can only be given once the job is completed. | 67 | 67 |
 | update_job_status | Job N is 'completed' and cannot move to 'in_progress'. | 48 | 48 |
-| update_job_status | €N for N h is €N.N per hour; rates between €N and €N per hour are accepted. Please check both figures. | 36 | 36 |
-| update_job_status | Hours worked must be between N.N and N. | 36 | 36 |
+| update_job_status | €N for N h is €N.N per hour; rates between €N and €N per hour are accepted. Please check both figures. | 42 | 42 |
+| update_job_status | Hours worked must be between N.N and N. | 42 | 42 |
 | update_job_status | Job N not found among your assigned jobs. | 27 | 27 |
 | create_incident | PoolTimeout: couldn't get a connection after N.N sec | 13 | 13 |
-| submit_feedback | You have already rated this job. | 11 | 11 |
+| submit_feedback | You have already rated this job. | 12 | 12 |
 | update_job_status | PoolTimeout: couldn't get a connection after N.N sec | 2 | 2 |
 | assign_handyman | OperationalError: consuming input failed: SSL connection has been closed unexpectedly | 1 | 1 |
 | update_job_status | OutOfMemory: out of memory DETAIL:  Failed on request of size N in memory context "ExecutorState". | 1 | 1 |

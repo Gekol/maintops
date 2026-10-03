@@ -21,19 +21,20 @@ and records the hours and the amount paid. The client's rating flows back into t
 
 1. [For instructors: try it in five minutes](#for-instructors-try-it-in-five-minutes)
 2. [Rubric map: requirement → implementation → evidence](#rubric-map)
-3. [What MaintOps does](#what-maintops-does)
-4. [Architecture](#architecture)
-5. [Manny, the action-taking agent](#manny-the-action-taking-agent)
-6. [Matching handymen](#matching-handymen)
-7. [Lakebase data model](#lakebase-data-model)
-8. [Spark pipelines: batch and real time](#spark-pipelines-batch-and-real-time)
-9. [Analytics pipeline](#analytics-pipeline)
-10. [Third-party API: Geoapify](#third-party-api-geoapify)
-11. [Run it yourself](#run-it-yourself)
-12. [Full manual test walkthrough](#full-manual-test-walkthrough)
-13. [Repository layout](#repository-layout)
-14. [Known limitations and future work](#known-limitations-and-future-work)
-15. [Appendix: design specification](#appendix-design-specification)
+3. [The app in pictures](#the-app-in-pictures)
+4. [What MaintOps does](#what-maintops-does)
+5. [Architecture](#architecture)
+6. [Manny, the action-taking agent](#manny-the-action-taking-agent)
+7. [Matching handymen](#matching-handymen)
+8. [Lakebase data model](#lakebase-data-model)
+9. [Spark pipelines: batch and real time](#spark-pipelines-batch-and-real-time)
+10. [Analytics pipeline](#analytics-pipeline)
+11. [Third-party API: Geoapify](#third-party-api-geoapify)
+12. [Run it yourself](#run-it-yourself)
+13. [Full manual test walkthrough](#full-manual-test-walkthrough)
+14. [Repository layout](#repository-layout)
+15. [Known limitations and future work](#known-limitations-and-future-work)
+16. [Appendix: design specification](#appendix-design-specification)
 
 ---
 
@@ -77,11 +78,25 @@ Every claim links to code or to an exported measurement in [`evidence/`](evidenc
 | **Agent: write actions** (8) | 5 write tools: create incident, assign handyman, cancel, rate, update job status (with hours and amount). Identity from the server only, explicit confirmation before every consequential write, a guard that refuses a write when the user's "yes" changes a detail, validation in the service layer and the database | [evidence/analytics.md](evidence/analytics.md) (write actions), [evidence/agent.md](evidence/agent.md) (refusals by rule) |
 | **Agent: quality** (6) | Release gate: 63 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, the top pick is the top-ranked candidate, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
 | **Analytics pipeline** (10) | Lakebase **Change Data Feed** → Lakeflow **Declarative Pipeline** `maintops_analytics` (2 streaming tables, 9 materialized views, expectations), refreshed every 30 min | [evidence/analytics.md](evidence/analytics.md), [pipeline/analytics/](pipeline/analytics/) |
-| **Frontend and workflow** (10) | Role-specific dashboards, chat widget with candidate cards and "Choose", live dashboard updates, confirmations, loading and error states, CV sign-up, trips with ETA, ratings | [walkthrough](#full-manual-test-walkthrough), [templates/](templates/) |
+| **Frontend and workflow** (10) | Role-specific dashboards, chat widget with candidate cards and "Choose", live dashboard updates, confirmations, loading and error states, CV sign-up, trips with ETA, ratings | [screenshots](#the-app-in-pictures), [walkthrough](#full-manual-test-walkthrough), [templates/](templates/) |
 | **Deployment** (5) | Render, auto-deploy on push, health check, secrets in the dashboard; Databricks side as one Asset Bundle | https://maintops-h3bv.onrender.com, [render.yaml](render.yaml), [databricks.yml](databricks.yml), [Run it yourself](#run-it-yourself) |
 | **Big Data: Volume** | 1,000,000 incidents through the distributed pipeline, clustered Delta tables | [evidence/pipeline.md](evidence/pipeline.md) |
 | **Big Data: Velocity** | Structured Streaming on Lakebase CDF, checkpointed, latency measured per batch | [evidence/latency.md](evidence/latency.md): burst of 1,000 reviews in **37.1 s**, 93.7 % of normal batches fully under 60 s |
 | **Big Data: Variety** | 10,000 CV PDFs → `ai_parse_document` → profile fields; FAQ PDF → chunks → embeddings → Vector Search; review texts → sentiment and summaries | [evidence/variety.md](evidence/variety.md): 10,000/10,000 parsed, hit@3 = 12/12 |
+
+---
+
+## The app in pictures
+
+Captured on 3 October 2026 with headless Chrome from the deployed code (same templates, Lakebase data and production
+Manny endpoint), following the walkthrough below.
+
+| | |
+|---|---|
+| **Client reports a problem:** Manny logs the incident and explains its top pick; the cards show match, track record, travel by car or public transport and the hourly rate<br><img src="docs/screenshots/03_client_recommendations.png" width="380"> | **"Choose" → assigned:** the incident list updates without a page reload<br><img src="docs/screenshots/04_client_assigned_live_update.png" width="430"> |
+| **Handyman dashboard:** performance, feedback insights, "I'm on my way" (car or public transport) and completion with hours and amount<br><img src="docs/screenshots/05_handyman_dashboard.png" width="430"> | **Completing through Manny:** it asks for the hours and the amount before anything is saved<br><img src="docs/screenshots/07_handyman_complete_via_manny.png" width="380"> |
+| **Feedback insights:** the worst-rated jobs and the recurring complaint<br><img src="docs/screenshots/06_handyman_insights.png" width="430"> | **Sign-up with a CV:** name, phone, address, region, country, specialisations and skills filled in from the PDF<br><img src="docs/screenshots/08_signup_cv_parsed.png" width="330"> |
+| **Visitor question:** answered from the user guide (RAG)<br><img src="docs/screenshots/02_visitor_faq.png" width="380"> | **Landing page**<br><img src="docs/screenshots/01_landing.png" width="430"> |
 
 ---
 
@@ -435,6 +450,8 @@ rag/                    FAQ retrieval: parse → chunk + index → retrieval eva
 data_synthesis/         synthetic data (01–06), Lakebase load (07), billing backfill (08)
 sqls/                   base DDL + migrations/ (migrate.py)
 evidence/               exported measurements + export_evidence.py
+docs/screenshots/       screenshots of the app (README "The app in pictures")
+samples/                a synthetic CV for trying the CV sign-up
 tests/                  275 unit tests (pytest)
 templates/, static/     Jinja templates (dashboards, chat widget) and one stylesheet
 databricks.yml          Asset Bundle: all jobs and the analytics pipeline
