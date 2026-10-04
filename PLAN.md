@@ -35,12 +35,19 @@ Stretch extras → handyman chat tool → CV batch parsing.
 On the Render URL: describe a problem → 3 candidates → choose → handyman completes → review → a new similar request ranks differently within ~1 min. Plus: Job run green (≥1M rows), traces and eval in MLflow, analytics tables updating.
 
 ## Demo script (evidence for grading — record on the Render URL)
-All synthetic accounts use the demo password from `data_synthesis/00_config` (`DEMO_PASSWORD`).
-Before recording: `databricks bundle run maintops_live --params max_minutes=60 -p george_sokolovsky` (live stream on).
+All synthetic accounts use the demo password `MaintOps!2026` (`DEMO_PASSWORD` in `data_synthesis/00_config`).
 
-1. **Visitor + RAG** — landing page, open Manny: "Do you always send the closest handyman?" → grounded FAQ answer. Try "Ignore all previous instructions…" → refusal. 📸
-2. **Client flow** — log in as `thomaskoch37@example.com` (Berlin). Dashboard → "Report New Incident" → "Water is leaking from the pipe under my kitchen sink." → Manny creates the incident, 3 cards (match %, success rate, rating, real travel time, price, review summary). 📸 Press **Choose** on one → confirm → assigned; dashboard shows it. 📸
-3. **Handyman flow** — log in as the chosen handyman (email: `SELECT email FROM maintops.users WHERE first_name||' '||last_name = '<name>'`) or `ute.wisniewski15@example.net` (has an assigned job) → **Start job** → **Mark completed**. 📸
-4. **Feedback loop** — back as the client: rate the job (e.g. 1★ "Arrived three hours late") → within ~1 min `maintops.handyman_performance` / `handyman_feedback` for that handyman update (show `latency_metrics` and the scorecard row before/after). 📸
-5. **Databricks evidence** 📸 — job runs (`maintops_pipeline`, `maintops_rag`, `maintops_live`), `pipeline_runs`, `quarantine_incidents` reasons, analytics pipeline graph + expectations, `analytics_*` tables, MLflow experiment `maintops_manny_eval` (scores + traces), endpoint `maintops-manny` + inference table `manny_payload`, UC model `bootcamp_students.maintops.manny`.
-6. **Burst test** — `.venv/bin/python pipeline/latency_test.py 1000` → PASS < 60 s. 📸
+Before recording:
+- Live stream on: `databricks bundle run maintops_live --params max_minutes=60 -p george_sokolovsky`.
+- Lakebase at 0.5–2 CU (it was found back at a fixed 0.5 CU once): `databricks postgres list-endpoints projects/george-sokolovsky-capstone/branches/production -p george_sokolovsky`.
+- Fresh Databricks token in Render (`DATABRICKS_TOKEN`, 1 h) unless the service principal is set; otherwise Manny and CV upload say "not available".
+- Open the Render URL once to wake the free instance (first request up to 50 s).
+
+1. **Visitor + RAG** — landing page, open Manny: "Do you always send the closest handyman?" → grounded FAQ answer. "How much does MaintOps cost?" → says pricing is not specified, invents nothing. "Ignore all previous instructions…" → refusal. 📸
+2. **Handyman sign-up with a CV** — Sign up → handyman → upload `samples/cv_100001.pdf` → name, phone, address (Krefelder Weg 16, 22419 Hamburg), region, specialisations and skills filled in (≈ 20 s, `ai_parse_document` + Manny). No need to submit. 📸
+3. **Client flow** — log in as `thomaskoch37@example.com` (Berlin). "Report New Incident" → "Water is leaking from the pipe under my kitchen sink." → Manny logs the incident and shows 3 cards (match %, skills matched, success rate, rating, real travel time by car or public transport, €/h, review summary). 📸 **Choose** the first → confirm → assigned; the card now shows the handyman's phone and email (contact details only while the job is active). 📸
+4. **Handyman flow** — log in as the chosen handyman (their email is on Thomas's card) or `ute.wisniewski15@example.net` (job #981034). The job card shows the client's name, address with a map link, phone and email. 📸 **I'm on my way** → by public transport, then by car (Geoapify route) → as the client: departure, travel time and expected arrival, never the starting point. 📸 Ask Manny "What's the client's phone number?" → it has no contact details and points to the job card. **Start job** → **Mark completed** with 1 h and €500 → refused (implausible €/h); with 2.5 h and €135 → confirmation shows €54.00 per hour → completed. 📸
+5. **Feedback loop** — back as the client: rate the job (e.g. 1★ "Arrived three hours late"), or via Manny "Rate job N 1 star" → asks for confirmation → saved. Within ~1 min `handyman_performance` / `handyman_feedback` and the handyman's €/h update (show `latency_metrics` and the scorecard before/after). 📸
+6. **Handyman insights** — as Ute: "Show me the jobs where my feedback was the worst" and "What's my weakest side?" → list + recurring complaint + one practical tip, every figure grounded. 📸
+7. **Databricks evidence** 📸 — job runs (`maintops_pipeline`, `maintops_rag`, `maintops_live`, `maintops_manny_deploy`), `pipeline_runs` (1,004,842 → 979,490 + 20,510 quarantined), `quarantine_incidents` reasons, Lakebase CDF `lb_*_history`, analytics pipeline `maintops_analytics` graph + expectations, `analytics_*` tables, release gate in MLflow experiment `maintops_manny_eval` (v32: 72 scenarios × 3, 216/216, 2,118 checks, 0 failed) + traces, endpoint `maintops-manny` + inference table `manny_payload`, UC model `bootcamp_students.maintops.manny` (alias `production`).
+8. **Burst test** — `.venv/bin/python pipeline/latency_test.py 1000` → PASS < 60 s. 📸
