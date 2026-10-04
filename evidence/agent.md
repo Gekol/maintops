@@ -1,8 +1,8 @@
 # Manny: release gate and live performance
 
-Every Manny version is evaluated on a temporary staging endpoint (63 multi-turn scenarios × 3 runs, every check in code) and promoted to production only if no check fails.
+Every Manny version is evaluated on a temporary staging endpoint (multi-turn scenarios × 3 runs, every check in code; 72 scenarios in the latest run) and promoted to production only if no check fails.
 
-_Exported 2026-10-03 17:56 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-04 21:57 UTC by `evidence/export_evidence.py`._
 
 ## Release-gate runs
 
@@ -31,6 +31,7 @@ Source: reports of job `maintops_manny_deploy` (`eval/results/` in the deployed 
 | 2026-10-03 14:21 | 63 | 188/189 | 1,857 | 1 | FAIL | feedback_confirmed: handyman_rating_count | 757b841b596942b6bc1fb71a3c9158c8 |
 | 2026-10-03 14:44 | 63 | 189/189 | 1,857 | 0 | PASS | – | 8340c593d97c445397e43177c375fc27 |
 | 2026-10-03 17:45 | 71 | 213/213 | 2,094 | 0 | PASS | – | b29d0e632bc44828a3a9f919cea099c0 |
+| 2026-10-04 21:26 | 72 | 216/216 | 2,118 | 0 | PASS | – | 3c16a524e9294a3aacfb7cbdea477160 |
 
 ## Tool calls (last 7 days)
 
@@ -38,18 +39,18 @@ Source: `maintops.app_events` (every tool call is logged with arguments and timi
 
 | tool | calls | success_pct | median_ms |
 |---|---|---|---|
-| find_handymen | 1,178 | 98.7 | 2,876 |
-| create_incident | 1,130 | 98.7 | 21 |
-| search_faq | 527 | 100.0 | 250 |
-| get_incident | 491 | 66.6 | 12 |
-| update_job_status | 368 | 54.3 | 17 |
-| get_my_performance | 234 | 99.6 | 21 |
-| cancel_incident | 221 | 66.1 | 15 |
-| search_my_reviews | 182 | 100.0 | 12 |
-| assign_handyman | 177 | 97.7 | 25 |
-| get_my_incidents | 173 | 99.4 | 12 |
-| submit_feedback | 160 | 48.8 | 19 |
-| get_my_jobs | 85 | 100.0 | 13 |
+| find_handymen | 1,223 | 98.8 | 2,771 |
+| create_incident | 1,173 | 98.7 | 21 |
+| search_faq | 556 | 100.0 | 250 |
+| get_incident | 518 | 67.2 | 12 |
+| update_job_status | 383 | 54.6 | 17 |
+| get_my_performance | 243 | 99.6 | 21 |
+| cancel_incident | 230 | 66.1 | 15 |
+| assign_handyman | 189 | 97.9 | 24 |
+| search_my_reviews | 188 | 100.0 | 12 |
+| get_my_incidents | 180 | 99.4 | 11 |
+| submit_feedback | 166 | 48.8 | 19 |
+| get_my_jobs | 88 | 100.0 | 12 |
 
 ## Why write tools were refused (last 7 days)
 
@@ -57,19 +58,19 @@ Source: `maintops.app_events`. Almost all of these come from the evaluation's te
 
 | tool | rule_that_refused | calls | from_eval_accounts |
 |---|---|---|---|
-| cancel_incident | Incident N is 'in_progress' and can no longer be cancelled. | 75 | 75 |
-| submit_feedback | Feedback can only be given once the job is completed. | 70 | 70 |
+| cancel_incident | Incident N is 'in_progress' and can no longer be cancelled. | 78 | 78 |
+| submit_feedback | Feedback can only be given once the job is completed. | 73 | 73 |
+| update_job_status | €N for N h is €N.N per hour; rates between €N and €N per hour are accepted. Please check both figures. | 48 | 48 |
+| update_job_status | Hours worked must be between N.N and N. | 48 | 48 |
 | update_job_status | Job N is 'completed' and cannot move to 'in_progress'. | 48 | 48 |
-| update_job_status | €N for N h is €N.N per hour; rates between €N and €N per hour are accepted. Please check both figures. | 45 | 45 |
-| update_job_status | Hours worked must be between N.N and N. | 45 | 45 |
 | update_job_status | Job N not found among your assigned jobs. | 27 | 27 |
 | create_incident | PoolTimeout: couldn't get a connection after N.N sec | 13 | 13 |
 | submit_feedback | You have already rated this job. | 12 | 12 |
 | update_job_status | PoolTimeout: couldn't get a connection after N.N sec | 2 | 2 |
-| assign_handyman | OperationalError: consuming input failed: SSL connection has been closed unexpectedly | 1 | 1 |
 | update_job_status | OutOfMemory: out of memory DETAIL:  Failed on request of size N in memory context "ExecutorState". | 1 | 1 |
-| create_incident | OperationalError: consuming input failed: SSL connection has been closed unexpectedly | 1 | 1 |
 | assign_handyman | This handyman has just become fully booked. Please choose another candidate. | 1 | 1 |
-| create_incident | Your account is not active. | 1 | 0 |
+| create_incident | OperationalError: consuming input failed: SSL connection has been closed unexpectedly | 1 | 1 |
 | assign_handyman | PoolTimeout: couldn't get a connection after N.N sec | 1 | 1 |
+| create_incident | Your account is not active. | 1 | 0 |
+| assign_handyman | OperationalError: consuming input failed: SSL connection has been closed unexpectedly | 1 | 1 |
 | assign_handyman | Incident N not found. | 1 | 0 |

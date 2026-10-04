@@ -2,7 +2,7 @@
 
 CV PDFs parsed with `ai_parse_document`, the FAQ PDF chunked and embedded for vector search, and review texts scored and summarised with AI functions.
 
-_Exported 2026-10-03 17:55 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-04 21:57 UTC by `evidence/export_evidence.py`._
 
 ## CV PDFs
 
@@ -27,7 +27,7 @@ Source: `review_sentiment` (`ai_analyze_sentiment`, one row per distinct review 
 | sentiment | distinct_texts |
 |---|---|
 | mixed | 58 |
-| positive | 45 |
+| positive | 46 |
 | negative | 13 |
 | neutral | 6 |
 

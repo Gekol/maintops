@@ -94,11 +94,13 @@ write("pipeline.md", "Spark pipeline and data volume",
               UNION ALL SELECT 'gold_handyman_feedback (sentiment + summaries)', count(*) FROM {SCHEMA}.gold_handyman_feedback
               UNION ALL SELECT 'synth_users (clients + handymen)', count(*) FROM {SCHEMA}.synth_users
               UNION ALL SELECT 'cv_parsed (CV PDFs read by ai_parse_document)', count(*) FROM {SCHEMA}.cv_parsed""")),
-          ("Latest run of every step", "`pipeline_runs` (each step logs its counts and checks; a failed check "
-           "stops the job)", delta(f"""
+          ("Latest full run of every step", "`pipeline_runs` (each step logs its counts and checks; a failed check "
+           "stops the job). Incremental re-runs read only new data (often 0 rows), so this shows each step's latest "
+           "run that had input to process", delta(f"""
               SELECT step, date_format(started_at, 'yyyy-MM-dd HH:mm') AS started_utc, round(duration_s) AS seconds,
                      rows_in, rows_out, rows_rejected, status, checks
-              FROM (SELECT *, row_number() OVER (PARTITION BY step ORDER BY started_at DESC) AS rn
+              FROM (SELECT *, row_number() OVER (PARTITION BY step
+                                                 ORDER BY coalesce(rows_in, 0) > 0 DESC, started_at DESC) AS rn
                     FROM {SCHEMA}.pipeline_runs WHERE step NOT LIKE '2%')
               WHERE rn = 1 ORDER BY step""")),
           ("Why records were quarantined", "`quarantine_incidents.reasons` (one record can have several)",
@@ -228,8 +230,9 @@ for f in sorted(w.workspace.list(GATE_REPORTS.format(user=user)), key=lambda o: 
 gate = (["run (UTC)", "scenarios", "runs passed", "checks", "failed", "gate", "what failed", "MLflow run"], gate_rows)
 
 write("agent.md", "Manny: release gate and live performance",
-      "Every Manny version is evaluated on a temporary staging endpoint (63 multi-turn scenarios × 3 runs, every "
-      "check in code) and promoted to production only if no check fails.", [
+      "Every Manny version is evaluated on a temporary staging endpoint (multi-turn scenarios × 3 runs, every "
+      f"check in code; {gate_rows[-1][1] if gate_rows else '?'} scenarios in the latest run) and promoted to production "
+      "only if no check fails.", [
           ("Release-gate runs", "reports of job `maintops_manny_deploy` (`eval/results/` in the deployed bundle; "
            "details and transcripts in MLflow experiment `maintops_manny_eval`)", gate),
           ("Tool calls (last 7 days)", "`maintops.app_events` (every tool call is logged with arguments and timing)",

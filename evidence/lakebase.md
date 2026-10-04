@@ -2,7 +2,7 @@
 
 The operational Postgres schema `maintops` as it is deployed: rows, keys, constraints, indexes and triggers.
 
-_Exported 2026-10-03 17:55 UTC by `evidence/export_evidence.py`._
+_Exported 2026-10-04 21:57 UTC by `evidence/export_evidence.py`._
 
 ## Tables
 
@@ -10,7 +10,7 @@ Source: `pg_catalog` (row counts are exact)
 
 | table_name | rows | pk | fk | checks | indexes | triggers |
 |---|---|---|---|---|---|---|
-| app_events | 14,983 | 1 | 2 | 2 | 5 | 0 |
+| app_events | 15,710 | 1 | 2 | 2 | 5 | 0 |
 | handyman_details | 10,024 | 1 | 1 | 5 | 3 | 2 |
 | handyman_feedback | 9,289 | 1 | 1 | 1 | 1 | 1 |
 | handyman_performance | 23,172 | 1 | 1 | 4 | 1 | 1 |
