@@ -10,7 +10,7 @@ and records the hours and the amount paid. The client's rating flows back into t
 | | |
 |---|---|
 | Scale | 1,000,000-incident history (Spark, Delta), 110,000 users and 10,000 handymen with PDF CVs, 44,800 live incidents in Lakebase |
-| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **71 scenarios × 3 runs, ~2,100 checks in code, any failure blocks the release** |
+| Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **72 scenarios × 3 runs, ~2,100 checks in code, any failure blocks the release** |
 | Real time | a review → the handyman's scorecard back in Lakebase: **37.1 s for a burst of 1,000 reviews**, median 32.7 s in normal operation |
 | Unstructured | 10,000 CV PDFs parsed (100 %), FAQ retrieval hit@3 = 12/12, review sentiment and summaries with AI functions |
 | Quality | 281 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
@@ -76,7 +76,7 @@ Every claim links to code or to an exported measurement in [`evidence/`](evidenc
 | **Lakebase data model** (15) | 7 tables: users, handyman details, incidents, trips, app events, two scorecard tables. PK/FK everywhere, **30 CHECK constraints**, triggers (`updated_at`, handyman role), 21 indexes, duplicate-incident guard, audit timestamps; 6 idempotent migrations with a dry-run mode | [evidence/lakebase.md](evidence/lakebase.md) (exported from `pg_catalog`), [sqls/](sqls/) |
 | **Agent: retrieval** (6) | 8 read tools over Lakebase, Vector Search (FAQ) and the Spark-built scorecards; `find_handymen` combines Lakebase, Delta-derived features and Geoapify | [Manny](#manny-the-action-taking-agent), [agent/manny.py](agent/manny.py) |
 | **Agent: write actions** (8) | 5 write tools: create incident, assign handyman, cancel, rate, update job status (with hours and amount). Identity from the server only, explicit confirmation before every consequential write, a guard that refuses a write when the user's "yes" changes a detail, validation in the service layer and the database | [evidence/analytics.md](evidence/analytics.md) (write actions), [evidence/agent.md](evidence/agent.md) (refusals by rule) |
-| **Agent: quality** (6) | Release gate: 71 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, the top pick is the top-ranked candidate, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
+| **Agent: quality** (6) | Release gate: 72 multi-turn scenarios × 3, checks are code (database state, tool arguments, every figure grounded in data the user may see, figures attributed to the right handyman, the top pick is the top-ranked candidate, confirmation before writes, emergencies, injection). Runtime guards: grounded numbers, mixed-up figures, phone numbers, emergency advice | [evidence/agent.md](evidence/agent.md): every gate run, including the ones that blocked a release; [eval/](eval/) |
 | **Analytics pipeline** (10) | Lakebase **Change Data Feed** → Lakeflow **Declarative Pipeline** `maintops_analytics` (2 streaming tables, 9 materialized views, expectations), refreshed every 30 min | [evidence/analytics.md](evidence/analytics.md), [pipeline/analytics/](pipeline/analytics/) |
 | **Frontend and workflow** (10) | Role-specific dashboards, chat widget with candidate cards and "Choose", live dashboard updates, confirmations, loading and error states, CV sign-up, trips with ETA, ratings | [screenshots](#the-app-in-pictures), [walkthrough](#full-manual-test-walkthrough), [templates/](templates/) |
 | **Deployment** (5) | Render, auto-deploy on push, health check, secrets in the dashboard; Databricks side as one Asset Bundle | https://maintops-h3bv.onrender.com, [render.yaml](render.yaml), [databricks.yml](databricks.yml), [Run it yourself](#run-it-yourself) |
@@ -208,7 +208,7 @@ extraction at sign-up. The server decides the user's role and id; the browser ca
   API call and guardrail decision in `app_events` → analytics.
 
 **Release gate** (`eval/`, job `maintops_manny_deploy`): a new version is registered, deployed to a temporary
-staging endpoint and evaluated with **71 multi-turn scenarios, 3 runs each**, on dedicated test accounts in Lakebase.
+staging endpoint and evaluated with **72 multi-turn scenarios, 3 runs each**, on dedicated test accounts in Lakebase.
 Every check is code, not an LLM's opinion:
 
 | What is checked after every turn | How |
@@ -300,7 +300,9 @@ Data Feed. The app never deletes records: it changes status, `is_active` or upse
 name, address (map link), phone and email, and the client's card shows the handyman's phone and email (never their home
 address). Once the job is completed or cancelled, only the name remains; candidates who were only recommended see
 nothing. Contact details are shown in the UI only and never sent to Manny, so they stay out of LLM prompts, traces and
-the inference table (`incidents.contact_details`).
+the inference table (`incidents.contact_details`). Manny is told it has no contact details and points to the job card;
+the release gate checks that it never invents an address, phone number or email (`edge_contact_details`,
+`edge_client_contact`).
 
 ---
 
@@ -483,7 +485,7 @@ maintops_core/          services shared by the app and Manny
   grounding.py          runtime check that a handyman's figures are their own
   rag.py, events.py, db.py   FAQ search, app_events logging, connection pool
 agent/                  manny.py (the agent) and deploy_manny.ipynb (register → staging → gate → production)
-eval/                   release gate: runner, 71 scenarios, deterministic checks, test-account fixtures
+eval/                   release gate: runner, 72 scenarios, deterministic checks, test-account fixtures
 pipeline/               Spark batch 10–16, live stream 20, latency test, analytics/ (Declarative Pipeline)
 rag/                    FAQ retrieval: parse → chunk + index → retrieval eval; vector-index keep-alive
 data_synthesis/         synthetic data (01–06), Lakebase load (07), billing backfill (08)

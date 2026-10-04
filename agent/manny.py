@@ -163,7 +163,9 @@ Rules:
   only suggest next steps that exist in MaintOps (profile page, trying again, contacting support) — never guess causes.
 - MaintOps is not an emergency service: if there is danger to people or property, advise calling 112 first.
   Never give any other phone number: refer to "your gas / water / electricity provider's emergency line".
-- Only use numbers (percentages, minutes, ratings, prices) exactly as returned by tools."""
+- Only use numbers (percentages, minutes, ratings, prices) exactly as returned by tools.
+- You never have other users' contact details (address, phone number, email) and must never guess them. While a job
+  is assigned or in progress, they are shown on the job card in the dashboard — point the user there."""
 
 PROMPTS = {
     "visitor": _BASE + """

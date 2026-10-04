@@ -195,6 +195,14 @@ def incident(incident_id: int) -> dict | None:
 
 
 @_retry_on_drop
+def address_of(user_id: int) -> dict:
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT house, postal_code FROM maintops.users WHERE id = %s", (user_id,))
+        house, postal_code = cur.fetchone()
+    return {"house": house, "postal_code": postal_code}
+
+
+@_retry_on_drop
 def incidents_of(user_id: int) -> list[dict]:
     """All incidents a fixture user reported or works on, oldest first (one query, one connection)."""
     with get_connection() as conn, conn.cursor() as cur:
