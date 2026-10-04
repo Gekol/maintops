@@ -26,6 +26,50 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="role" id="roleInput" value="{{ role }}">
 
+    <!-- Handyman-only start: choose CV upload or manual entry; the form appears after either -->
+    <div id="handymanStart" style="{{ '' if role == 'handyman' else 'display:none;' }}">
+      <div class="form-section-title">How would you like to fill in your profile?</div>
+
+      <!-- Method picker: CV upload vs manual entry -->
+      <div id="methodPicker" class="method-picker">
+        <button type="button" class="method-btn" data-method="cv" onclick="selectMethod('cv')">
+          📄 Upload CV
+        </button>
+        <button type="button" class="method-btn" data-method="manual" onclick="selectMethod('manual')">
+          ✍️ Enter Manually
+        </button>
+      </div>
+      <input type="hidden" name="entry_method" id="entryMethod" value="">
+
+      <!-- CV upload zone -->
+      <div id="cvUploadZone" class="cv-upload-zone" style="display:none;">
+        <div class="cv-dropzone" id="cvDropzone">
+          <div class="cv-dropzone-icon">📤</div>
+          <p>Drag &amp; drop your CV here, or click to browse</p>
+          <p class="text-muted">PDF, PNG, JPG &mdash; we’ll extract your details automatically</p>
+          <input type="file" id="cv_file" name="cv_file" accept=".pdf,.png,.jpg,.jpeg">
+        </div>
+        <div id="cvFileInfo" class="cv-file-info" style="display:none;">
+          <span id="cvFileName"></span>
+          <button type="button" class="btn-remove-file" onclick="removeCvFile()">&times;</button>
+        </div>
+        <button type="button" class="btn btn-primary btn-block mt-2" id="parseCvBtn"
+                onclick="parseCV()" style="display:none;">
+          🧠 Parse CV &amp; Pre-fill Form
+        </button>
+        <div id="parseSpinner" class="parse-spinner" style="display:none;">
+          <div class="spinner"></div>
+          <span>Extracting data from your CV…</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Everything else: shown at once for clients, for handymen after the CV is read or manual entry is chosen -->
+    <div id="formBody" style="{{ 'display:none;' if role == 'handyman' }}">
+    <div id="cvParsedBanner" class="alert alert-success" style="display:none;">
+      ✅ CV parsed! Review the pre-filled data below and edit anything that needs correcting.
+    </div>
+
     <!-- Basic info -->
     <div class="form-section-title">Basic Information</div>
     <div class="form-row">
@@ -96,64 +140,24 @@
     <!-- Handyman-only: professional profile -->
     <div id="handymanFields" style="{{ '' if role == 'handyman' else 'display:none;' }}">
       <div class="form-section-title">Professional Profile</div>
-
-      <!-- Method picker: CV upload vs manual entry -->
-      <div id="methodPicker" class="method-picker">
-        <button type="button" class="method-btn selected" onclick="selectMethod('cv')">
-          📄 Upload CV
-        </button>
-        <button type="button" class="method-btn" onclick="selectMethod('manual')">
-          ✍️ Enter Manually
-        </button>
-      </div>
-      <input type="hidden" name="entry_method" id="entryMethod" value="cv">
-
-      <!-- CV upload zone -->
-      <div id="cvUploadZone" class="cv-upload-zone">
-        <div class="cv-dropzone" id="cvDropzone">
-          <div class="cv-dropzone-icon">📤</div>
-          <p>Drag &amp; drop your CV here, or click to browse</p>
-          <p class="text-muted">PDF, PNG, JPG &mdash; we’ll extract your details automatically</p>
-          <input type="file" id="cv_file" name="cv_file" accept=".pdf,.png,.jpg,.jpeg">
-        </div>
-        <div id="cvFileInfo" class="cv-file-info" style="display:none;">
-          <span id="cvFileName"></span>
-          <button type="button" class="btn-remove-file" onclick="removeCvFile()">&times;</button>
-        </div>
-        <button type="button" class="btn btn-primary btn-block mt-2" id="parseCvBtn"
-                onclick="parseCV()" style="display:none;">
-          🧠 Parse CV &amp; Pre-fill Form
-        </button>
-        <div id="parseSpinner" class="parse-spinner" style="display:none;">
-          <div class="spinner"></div>
-          <span>Extracting data from your CV…</span>
+      <div class="form-group">
+        <label>Primary specialisations</label>
+        <div class="multiselect-grid">
+          {% for spec in specialisations %}
+          <label>
+            <input type="checkbox" name="specialisations" value="{{ spec }}" class="spec-checkbox">
+            <span>{{ spec | replace('_', ' ') | title }}</span>
+          </label>
+          {% endfor %}
         </div>
       </div>
-
-      <!-- Professional profile fields (shared by both methods) -->
-      <div id="profileFields" style="{{ 'display:none;' if role == 'handyman' else '' }}">
-        <div id="cvParsedBanner" class="alert alert-success" style="display:none;">
-          ✅ CV parsed! Review the pre-filled data below and edit anything that needs correcting.
-        </div>
-        <div class="form-group">
-          <label>Primary specialisations</label>
-          <div class="multiselect-grid">
-            {% for spec in specialisations %}
-            <label>
-              <input type="checkbox" name="specialisations" value="{{ spec }}" class="spec-checkbox">
-              <span>{{ spec | replace('_', ' ') | title }}</span>
-            </label>
-            {% endfor %}
-          </div>
-        </div>
-        <div class="form-group">
-          <label for="skills">Skills (comma-separated)</label>
-          <input type="text" id="skills" name="skills" placeholder="pipe repair, leak detection, boiler maintenance">
-        </div>
-        <div class="form-group">
-          <label for="experience">Experience summary</label>
-          <textarea id="experience" name="experience" placeholder="Brief professional summary..."></textarea>
-        </div>
+      <div class="form-group">
+        <label for="skills">Skills (comma-separated)</label>
+        <input type="text" id="skills" name="skills" placeholder="pipe repair, leak detection, boiler maintenance">
+      </div>
+      <div class="form-group">
+        <label for="experience">Experience summary</label>
+        <textarea id="experience" name="experience" placeholder="Brief professional summary..."></textarea>
       </div>
     </div>
 
@@ -163,6 +167,7 @@
     </div>
 
     <button type="submit" class="btn btn-primary btn-block">Create account</button>
+    </div>
   </form>
 
   <div class="divider"><span>or</span></div>
@@ -184,42 +189,31 @@
     document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
     event.currentTarget.classList.add('selected');
 
-    const clientFields   = document.getElementById('clientFields');
-    const handymanFields = document.getElementById('handymanFields');
-    const caption        = document.getElementById('roleCaption');
-
-    if (role === 'handyman') {
-      clientFields.style.display   = 'none';
-      handymanFields.style.display = '';
-      caption.textContent = 'Handyman onboarding: CV upload, document parsing, AI extraction, and profile enrichment.';
-      // Reset to CV method and hide profile fields until method chosen
-      selectMethod('cv');
+    const isHandyman = role === 'handyman';
+    document.getElementById('clientFields').style.display   = isHandyman ? 'none' : '';
+    document.getElementById('handymanFields').style.display = isHandyman ? '' : 'none';
+    document.getElementById('handymanStart').style.display  = isHandyman ? '' : 'none';
+    if (isHandyman) {
+      selectMethod('');       // handymen start with only the CV / manual choice
     } else {
-      clientFields.style.display   = '';
-      handymanFields.style.display = 'none';
-      caption.textContent = 'Client onboarding captures profile and address details for registration and geocoding.';
+      document.getElementById('formBody').style.display = '';
     }
   }
 
   /* ── Method picker (CV vs manual) ───────────────────────────── */
   function selectMethod(method) {
     document.getElementById('entryMethod').value = method;
-    document.querySelectorAll('.method-btn').forEach(b => b.classList.remove('selected'));
-    event && event.currentTarget && event.currentTarget.classList.add('selected');
+    document.querySelectorAll('.method-btn').forEach(b => b.classList.toggle('selected', b.dataset.method === method));
 
-    const cvZone       = document.getElementById('cvUploadZone');
-    const profileFields = document.getElementById('profileFields');
-    const parsedBanner = document.getElementById('cvParsedBanner');
-
-    if (method === 'cv') {
-      cvZone.style.display       = '';
-      profileFields.style.display = 'none';
-      parsedBanner.style.display = 'none';
-    } else {
-      cvZone.style.display       = 'none';
-      profileFields.style.display = '';
-      parsedBanner.style.display = 'none';
+    const cvParsed = document.getElementById('cvParsedBanner').style.display !== 'none';
+    document.getElementById('cvUploadZone').style.display = method === 'cv' ? '' : 'none';
+    if (method === 'manual') {
+      document.getElementById('cvParsedBanner').style.display = 'none';
       clearProfileFields();
+      document.getElementById('formBody').style.display = '';
+    } else {
+      // CV: the form appears once the CV has been read
+      document.getElementById('formBody').style.display = method === 'cv' && cvParsed ? '' : 'none';
     }
   }
 
@@ -259,7 +253,7 @@
     document.getElementById('cvFileInfo').style.display = 'none';
     document.getElementById('parseCvBtn').style.display = 'none';
     dropzone.style.display = '';
-    document.getElementById('profileFields').style.display = 'none';
+    document.getElementById('formBody').style.display = 'none';
     document.getElementById('cvParsedBanner').style.display = 'none';
   }
 
@@ -283,7 +277,7 @@
         document.getElementById('parseSpinner').style.display = 'none';
 
         if (data.error) {
-          alert('CV parsing failed: ' + data.error);
+          alert('CV parsing failed: ' + data.error + '\nTry again, or choose Enter Manually.');
           document.getElementById('parseCvBtn').style.display = '';
           return;
         }
@@ -311,7 +305,7 @@
         }
 
         // Show pre-filled form
-        document.getElementById('profileFields').style.display = '';
+        document.getElementById('formBody').style.display = '';
         document.getElementById('cvParsedBanner').style.display = '';
       })
       .catch(err => {

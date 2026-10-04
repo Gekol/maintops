@@ -521,6 +521,17 @@ would mostly rediscover the generator.
 As they accumulate, a scheduled job would delete completed and cancelled incidents older than N months once they are
 confirmed in silver, and the live stream would ignore those deletes so Delta keeps the full history.
 
+**Next: every handyman is also a client.** Today an account is fixed as client or handyman at sign-up
+(`is_handyman`). Instead, every account would be a client, and being a handyman would be an extra role: a client could
+mark themselves as a handyman from the profile, going through the same onboarding as sign-up (upload a CV or enter the
+profile by hand), which adds the `handyman_details` row. They keep their address and past incidents and can still
+report incidents of their own; matching would never offer a handyman their own incident.
+
+**Next: handymen pause new orders.** A handyman could deactivate their handyman profile: they get no new orders
+(matching skips them, and their current jobs continue), but they can still report incidents as a client and
+reactivate at any time. This needs a separate flag such as `handyman_details.accepting_jobs`, because
+`users.is_active` switches off the whole account.
+
 ---
 
 ## Appendix: design specification
