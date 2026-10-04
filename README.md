@@ -312,6 +312,10 @@ Data Feed. The app never deletes records: it changes status, `is_active` or upse
 | 15 Sync | Upsert scorecards to Lakebase, keep `handyman_details` (jobs, rating, hourly rate) consistent |
 | 16 Parse CVs | `ai_parse_document` over 10,000 PDFs, incremental |
 
+The job runs the steps as three tasks: `ingest` (10–12) and `gold` (13–15) each run their steps in one session,
+since starting a serverless session costs 10–25 s per task; `parse_cvs` (16) runs alongside. A run with nothing new
+takes about 2 min, a full rebuild of the 1M rows (`force=true`) about 3 min.
+
 **Real time** (job `maintops_live`, [20_live_stream](pipeline/20_live_stream.ipynb)): Structured Streaming on the
 Lakebase CDF history table. Each micro-batch merges the changed incidents into silver, recomputes the scorecards of
 only the affected handymen and pushes them to Lakebase first, then does the Delta bookkeeping and records the
