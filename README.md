@@ -13,7 +13,7 @@ and records the hours and the amount paid. The client's rating flows back into t
 | Agent | 13 tools (5 write), every write confirmed by the user first; released only through an automated gate: **72 scenarios × 3 runs, ~2,100 checks in code, any failure blocks the release** |
 | Real time | a review → the handyman's scorecard back in Lakebase: **37.1 s for a burst of 1,000 reviews**, median 32.7 s in normal operation |
 | Unstructured | 10,000 CV PDFs parsed (100 %), FAQ retrieval hit@3 = 12/12, review sentiment and summaries with AI functions |
-| Quality | 281 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
+| Quality | 288 unit tests, lint clean, every measurement in [`evidence/`](evidence/) regenerated from the live systems by one script |
 
 ---
 
@@ -428,7 +428,7 @@ pip install -r requirements.txt
 cp .env.example .env            # fill in the 7 settings
 set -a; . ./.env; set +a
 flask --app app run --debug     # http://127.0.0.1:5000
-.venv/bin/python -m pytest -q   # 281 unit tests, no network or database
+.venv/bin/python -m pytest -q   # 288 unit tests, no network or database
 uvx ruff check .                # lint
 ```
 
@@ -496,7 +496,7 @@ sqls/                   base DDL + migrations/ (migrate.py)
 evidence/               exported measurements + export_evidence.py
 docs/screenshots/       screenshots of the app (README "The app in pictures")
 samples/                a synthetic CV for trying the CV sign-up
-tests/                  281 unit tests (pytest)
+tests/                  288 unit tests (pytest)
 templates/, static/     Jinja templates (dashboards, chat widget) and one stylesheet
 databricks.yml          Asset Bundle: all jobs and the analytics pipeline
 render.yaml, .env.example, pyproject.toml, requirements*.txt
