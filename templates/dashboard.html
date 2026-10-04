@@ -86,6 +86,18 @@
         {% if inc.rating %}<span>{{ '★' * inc.rating }}</span>{% endif %}
       </div>
       {% if inc.feedback %}<p class="dash-incident-feedback">“{{ inc.feedback }}”</p>{% endif %}
+      {% set c = inc.client %}
+      {% if c.address or c.phone or c.email %}
+      <div class="job-contact">
+        <strong>👤 {{ c.name }}</strong>
+        {% if c.address %}<span>📍 <a href="https://www.google.com/maps/search/?api=1&query={{ c.address | urlencode }}"
+          target="_blank" rel="noopener">{{ c.address }}</a></span>{% endif %}
+        {% if c.phone %}<span>📞 <a href="tel:{{ c.phone | replace(' ', '') }}">{{ c.phone }}</a></span>{% endif %}
+        {% if c.email %}<span>✉ <a href="mailto:{{ c.email }}">{{ c.email }}</a></span>{% endif %}
+      </div>
+      {% elif c.name %}
+      <p class="job-contact-name">👤 {{ c.name }}</p>
+      {% endif %}
       {% if inc.status == 'assigned' %}
       {% set trip = trips.get(inc.id) %}
       {% if trip %}
@@ -199,6 +211,14 @@
         <span>#{{ inc.id }}</span>
         {% if inc.rating %}<span>{{ '★' * inc.rating }}</span>{% endif %}
       </div>
+      {% set h = inc.handyman %}
+      {% if h and (h.phone or h.email) %}
+      <div class="job-contact">
+        <strong>🔧 {{ h.name }}</strong>
+        {% if h.phone %}<span>📞 <a href="tel:{{ h.phone | replace(' ', '') }}">{{ h.phone }}</a></span>{% endif %}
+        {% if h.email %}<span>✉ <a href="mailto:{{ h.email }}">{{ h.email }}</a></span>{% endif %}
+      </div>
+      {% endif %}
       {% set trip = trips.get(inc.id) %}
       {% if inc.status == 'assigned' and trip %}
       <p class="trip-eta">

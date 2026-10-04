@@ -11,15 +11,11 @@ from datetime import datetime, timedelta
 
 from maintops_core import geo
 from maintops_core.db import get_connection
-from maintops_core.incidents import ServiceError
+from maintops_core.incidents import ServiceError, format_address
 
 ORIGINS = ("home", "last_job", "custom")
 MODES = ("drive", "transit")
 LAST_JOB_WINDOW_HOURS = 12        # "my last job" = in progress, or completed within this window
-
-
-def _address(house, postal_code, city) -> str:
-    return ", ".join(p for p in (house, " ".join(q for q in (postal_code, city) if q)) if p)
 
 
 def choose_mode(has_car: bool, requested: str | None) -> str:
@@ -59,8 +55,8 @@ def trip_origins(handyman_id: int) -> dict:
             ORDER BY COALESCE(i.completed_at, i.assigned_at) DESC
             LIMIT 1""", (handyman_id, window))
         last = cur.fetchone()
-    home = {"address": _address(house, postal, city), "lat": lat, "lon": lon} if lat is not None else None
-    last_job = ({"incident_id": last[0], "address": _address(*last[1:4]), "lat": last[4], "lon": last[5]}
+    home = {"address": format_address(house, postal, city), "lat": lat, "lon": lon} if lat is not None else None
+    last_job = ({"incident_id": last[0], "address": format_address(*last[1:4]), "lat": last[4], "lon": last[5]}
                 if last else None)
     return {"has_car": bool(has_car), "home": home, "last_job": last_job}
 

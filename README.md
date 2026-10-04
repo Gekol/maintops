@@ -296,6 +296,12 @@ Every row has `created_at`/`updated_at` (a trigger keeps `updated_at` current) a
 Data Feed. The app never deletes records: it changes status, `is_active` or upserts. Schema = base DDL in
 [sqls/](sqls/) + 6 idempotent migrations, applied by `python sqls/migrate.py` (`--dry-run` rolls back).
 
+**Contact details, need-to-know.** While a job is assigned or in progress, the handyman's job card shows the client's
+name, address (map link), phone and email, and the client's card shows the handyman's phone and email (never their home
+address). Once the job is completed or cancelled, only the name remains; candidates who were only recommended see
+nothing. Contact details are shown in the UI only and never sent to Manny, so they stay out of LLM prompts, traces and
+the inference table (`incidents.contact_details`).
+
 ---
 
 ## Spark pipelines: batch and real time

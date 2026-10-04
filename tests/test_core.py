@@ -321,3 +321,26 @@ def test_dbx_auth_failure_is_a_request_error(monkeypatch):
     monkeypatch.setattr(dbx_auth.requests, "post", lambda *a, **k: FakeResponse(401, {"error": "invalid_client"}))
     with pytest.raises(requests.RequestException):
         dbx_auth.bearer()
+
+
+# ─────────────────────────────────────────────────────────────
+# Contact details on job cards (need-to-know)
+# ─────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("status", ["assigned", "in_progress"])
+def test_contact_details_shown_while_job_active(status):
+    c = incidents.contact_details(status, "Anna Schmidt", "+49 30 123", "anna@example.com",
+                                  "Hauptstr. 5", "10115", "Berlin")
+    assert c == {"name": "Anna Schmidt", "phone": "+49 30 123", "email": "anna@example.com",
+                 "address": "Hauptstr. 5, 10115 Berlin"}
+
+
+@pytest.mark.parametrize("status", ["open", "recommended", "completed", "cancelled"])
+def test_contact_details_name_only_otherwise(status):
+    c = incidents.contact_details(status, "Anna Schmidt", "+49 30 123", "anna@example.com",
+                                  "Hauptstr. 5", "10115", "Berlin")
+    assert c == {"name": "Anna Schmidt"}
+
+
+def test_contact_details_without_address():
+    assert incidents.contact_details("assigned", "Bo", "1", None)["address"] is None
+    assert incidents.format_address(None, "10115", "Berlin") == "10115 Berlin"

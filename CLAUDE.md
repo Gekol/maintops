@@ -55,7 +55,7 @@ The project is graded against the rubric below; weigh design and implementation 
 - App: Python 3.12, `.venv` has the app deps; `set -a; . ./.env; set +a` plus `DATABRICKS_HOST`/`DATABRICKS_TOKEN` (`databricks auth token -p george_sokolovsky`), then `flask run --debug`.
 - Schema changes: add `sqls/migrations/00N_*.sql` (idempotent), `python sqls/migrate.py --dry-run`, then without the flag.
 - Notebooks locally: `pip install -r requirements-notebooks.txt` . Never install `pyspark` next to `databricks-connect`.
-- Tests: `.venv/bin/python -m pytest -q` (281 unit tests incl. 200 randomised ranking cases, no DB/network). Lint: `uvx ruff check .` (config in `pyproject.toml`: line length 120; notebooks and the generated `00_config.py` excluded; Manny's prompt strings are exempt from E501 because rewrapping them changes the gated prompt). Keep it passing.
+- Tests: `.venv/bin/python -m pytest -q` (288 unit tests incl. 200 randomised ranking cases, no DB/network). Lint: `uvx ruff check .` (config in `pyproject.toml`: line length 120; notebooks and the generated `00_config.py` excluded; Manny's prompt strings are exempt from E501 because rewrapping them changes the gated prompt). Keep it passing.
 
 ## Status
 See `PLAN.md` for the schedule. Done: RAG (own endpoint `maintops_vs`, hit@3 12/12), synthetic data + Lakebase load, migrations, CDF, batch Spark pipeline, live stream, core services, Manny agent + UC deployment, Manny widget wired to `/api/manny` with candidate cards and "Choose".

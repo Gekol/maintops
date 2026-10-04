@@ -296,14 +296,17 @@ def dashboard():
                     }
 
                 # Fetch assigned incidents
+                # Client contact: name always, address/phone/email only while the job is active
                 cur.execute(
-                    "SELECT id, description, incident_type, urgency, "
-                    "status, created_at, rating, feedback, hours_worked, amount_paid_eur "
-                    "FROM maintops.incidents "
-                    "WHERE handyman_user_id = %s "
-                    "ORDER BY status IN "
+                    "SELECT i.id, i.description, i.incident_type, i.urgency, "
+                    "i.status, i.created_at, i.rating, i.feedback, i.hours_worked, i.amount_paid_eur, "
+                    "c.first_name || ' ' || c.last_name, c.phone, c.email, c.house, c.postal_code, c.city "
+                    "FROM maintops.incidents i "
+                    "JOIN maintops.users c ON c.id = i.reported_by_user_id "
+                    "WHERE i.handyman_user_id = %s "
+                    "ORDER BY i.status IN "
                     "('assigned', 'in_progress') DESC, "
-                    "created_at DESC LIMIT 20",
+                    "i.created_at DESC LIMIT 20",
                     (current_user.id,),
                 )
                 for r in cur.fetchall():
@@ -313,6 +316,7 @@ def dashboard():
                         "status": r[4], "created_at": r[5],
                         "rating": r[6], "feedback": r[7],
                         "hours_worked": r[8], "amount_paid_eur": r[9],
+                        "client": inc.contact_details(r[4], *r[10:16]),
                     })
             else:
                 # Fetch client's reported incidents (with handyman name)
@@ -320,7 +324,7 @@ def dashboard():
                     "SELECT i.id, i.description, i.incident_type, i.urgency, "
                     "i.status, i.created_at, "
                     "u.first_name || ' ' || u.last_name AS handyman_name, i.rating, i.feedback, "
-                    "i.hours_worked, i.amount_paid_eur "
+                    "i.hours_worked, i.amount_paid_eur, u.phone, u.email "
                     "FROM maintops.incidents i "
                     "LEFT JOIN maintops.users u ON i.handyman_user_id = u.id "
                     "WHERE i.reported_by_user_id = %s "
@@ -334,6 +338,8 @@ def dashboard():
                         "status": r[4], "created_at": r[5],
                         "handyman_name": r[6], "rating": r[7], "feedback": r[8],
                         "hours_worked": r[9], "amount_paid_eur": r[10],
+                        # Handyman contact (never their home address), only while the job is active
+                        "handyman": inc.contact_details(r[4], r[6], r[11], r[12]) if r[6] else None,
                     })
 
     # "I'm on my way" trips: the handyman's own view, or the client's estimate (no starting address)

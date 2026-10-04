@@ -35,6 +35,20 @@ _INCIDENT_COLS = ("id, description, incident_type, urgency, status, required_ski
                   "created_at, assigned_at, completed_at, hours_worked, amount_paid_eur")
 
 
+def format_address(house, postal_code, city) -> str:
+    return ", ".join(p for p in (house, " ".join(q for q in (postal_code, city) if q)) if p)
+
+
+def contact_details(status: str, name: str | None, phone: str | None = None, email: str | None = None,
+                    house: str | None = None, postal_code: str | None = None, city: str | None = None) -> dict:
+    """The other party on a job card: the name always; phone, email and address only while the job is active
+    (assigned / in progress), so they disappear again once it is completed or cancelled (need-to-know)."""
+    contact = {"name": name}
+    if status in ACTIVE_STATUSES:
+        contact.update(phone=phone, email=email, address=format_address(house, postal_code, city) or None)
+    return contact
+
+
 def _incident_dict(row) -> dict:
     keys = [c.strip() for c in _INCIDENT_COLS.split(",")]
     d = dict(zip(keys, row, strict=True))

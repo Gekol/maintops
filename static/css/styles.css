@@ -955,6 +955,10 @@ a:hover { color: var(--secondary); }
 .dash-incident-feedback { color: var(--text-secondary); font-style: italic; font-size: 0.88rem; margin-top: 0.5rem; }
 .trip-eta { margin-top: 0.6rem; padding: 0.55rem 0.75rem; border-radius: var(--radius-sm); background: #12261F;
             border: 1px solid var(--primary-light); font-size: 0.88rem; line-height: 1.45; }
+.job-contact { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin-top: 0.6rem; padding: 0.55rem 0.75rem;
+               border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.88rem; }
+.job-contact a { color: var(--secondary); overflow-wrap: anywhere; }
+.job-contact-name { color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem; }
 .trip-note, .trip-hint { color: var(--text-secondary); font-size: 0.82rem; }
 .trip-form { margin-top: 0.7rem; }
 .trip-form summary { cursor: pointer; color: var(--secondary); font-size: 0.9rem; }
