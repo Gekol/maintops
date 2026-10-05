@@ -446,6 +446,63 @@ Jobs in [databricks.yml](databricks.yml): `maintops_rag` (FAQ index), `maintops_
 load), `maintops_pipeline`, `maintops_live`, `maintops_manny_deploy`, `maintops_analytics_refresh` (every 30 min),
 `maintops_vs_keepalive` (every 4 h).
 
+### Environment variables
+
+The web app reads everything from the environment: the Render dashboard in production, a git-ignored `.env` locally
+(template: [.env.example](.env.example)). Nothing secret is in the repository.
+
+| Variable | What it is for | Where it comes from | Secret |
+|---|---|---|---|
+| `FLASK_SECRET_KEY` | signs sessions and CSRF tokens | Render generates it (`render.yaml`); locally any long random string | yes |
+| `LAKEBASE_PG_URL` | Postgres connection of the app role | `postgresql://<role>:<password>@<endpoint host>:5432/databricks_postgres?sslmode=require` (see step 1 below) | yes |
+| `DATABRICKS_HOST` | workspace URL for Manny, CV upload and `ai_parse_document` | `https://<workspace>.cloud.databricks.com` | no |
+| `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` | service principal; the app fetches and renews its own token | workspace admin ([Databricks access](#databricks-access-for-the-web-app-for-the-workspace-admin)) | yes |
+| `DATABRICKS_TOKEN` | fallback when there is no service principal | `databricks auth token --force-refresh` (1 h) or an admin's longer token | yes |
+| `MANNY_ENDPOINT` | Manny's serving endpoint | `maintops-manny` | no |
+| `DATABRICKS_WAREHOUSE_ID` | SQL warehouse that runs `ai_parse_document` on uploaded CVs | SQL Warehouses → the warehouse → ID | no |
+| `GEOAPIFY_API_KEY` | geocoding and routing | free key at geoapify.com | yes |
+
+The Databricks jobs read the same two secrets from the secret scope `maintops` (`lakebase_pg_url`,
+`geoapify_api_key`), never from code or notebook parameters.
+
+### Deploy from scratch
+
+In this order; each step needs the one before it. Commands use the Databricks CLI with a configured profile.
+
+1. **Lakebase.** Create an Autoscaling project with a `production` branch and a primary compute of **0.5–2 CU**
+   (a fixed 0.5 CU is too small: the change-data-feed worker runs out of memory and Postgres restarts every few
+   seconds). Under Roles & Databases, create a Postgres role with a password for the app; that role and password go
+   into `LAKEBASE_PG_URL`. As the table owner (your Databricks identity), run the base DDL in [sqls/](sqls/)
+   (`users_create.sql`, `handymen_details_create.sql`, `incidents_create.sql`), then
+   `python sqls/migrate.py --dry-run` and `python sqls/migrate.py`: the six migrations add the remaining tables,
+   constraints, triggers and indexes, and grant the app role access. Adjust the profile and endpoint name at the top
+   of [sqls/migrate.py](sqls/migrate.py) for another workspace.
+2. **Secrets for the jobs.**
+   ```bash
+   databricks secrets create-scope maintops -p <profile>
+   databricks secrets put-secret maintops lakebase_pg_url --string-value '<LAKEBASE_PG_URL>' -p <profile>
+   databricks secrets put-secret maintops geoapify_api_key --string-value '<GEOAPIFY_API_KEY>' -p <profile>
+   ```
+3. **Databricks resources:** `databricks bundle deploy -p <profile>` creates every job and the analytics pipeline
+   from [databricks.yml](databricks.yml).
+4. **Data:** `databricks bundle run maintops_synth -p <profile>` generates the synthetic data and loads users,
+   handymen and recent incidents into Lakebase (the longest step: it also renders the 10,000 CV PDFs).
+5. **Change Data Feed:** on the Lakebase branch, Lakebase CDF → sync schema `maintops` to
+   `bootcamp_students.maintops`; the tables appear as `lb_<table>_history` within seconds of each change.
+6. **Pipelines and search:** `databricks bundle run maintops_pipeline` (batch, 1M rows and 10,000 CVs),
+   `databricks bundle run maintops_rag` (FAQ index on the `maintops_vs` endpoint). The analytics pipeline and the
+   keep-alive then run on their schedules.
+7. **Manny:** `databricks bundle run maintops_manny_deploy` logs the agent, registers it in Unity Catalog, runs the
+   release gate on a staging endpoint and creates `maintops-manny` only if every check passes (30–60 minutes).
+8. **Web app on Render:** New → Blueprint → connect this repository. [render.yaml](render.yaml) creates the web
+   service: Python 3.12, `pip install -r requirements.txt`, gunicorn (2 workers × 4 threads), health check
+   `/healthz` (fails when Lakebase is unreachable), a generated `FLASK_SECRET_KEY`. Fill in the other variables
+   above in the dashboard (they are `sync: false`, so they never come from the repository) and deploy; every push to
+   `main` redeploys.
+9. **Check:** `/healthz` returns `{"status":"ok"}`, Manny answers a visitor question, and the
+   [walkthrough](#full-manual-test-walkthrough) runs end to end. Start the live stream when needed:
+   `databricks bundle run maintops_live --params max_minutes=60 -p <profile>`.
+
 ---
 
 ## Full manual test walkthrough
